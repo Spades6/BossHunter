@@ -4,7 +4,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.prompt import Prompt
 
-from bosshunter.db import get_db, get_jobs_by_status, update_job_status, add_history
+from bosshunter.db import get_db, get_jobs_pending_confirmation, update_job_status, add_history
 
 console = Console()
 
@@ -12,7 +12,7 @@ console = Console()
 def show_confirmation(config: dict) -> bool:
     """Display jobs for confirmation. Returns True if any jobs were approved."""
     db = get_db()
-    jobs = get_jobs_by_status(db, "ready")
+    jobs = get_jobs_pending_confirmation(db)
 
     if not jobs:
         console.print("[yellow]没有待确认的岗位[/yellow]")

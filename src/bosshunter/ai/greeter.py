@@ -7,6 +7,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from bosshunter.ai.credentials import get_anthropic_api_key
 from bosshunter.db import get_db, get_jobs_by_status, update_job_greeting, update_job_status
 
 console = Console()
@@ -76,7 +77,7 @@ def _call_claude(prompt: str, config: dict) -> str | None:
         return None
 
     ai_cfg = config.get("ai", {})
-    api_key = os.environ.get("ANTHROPIC_AUTH_TOKEN") or ai_cfg.get("api_key")
+    api_key = get_anthropic_api_key(config)
     if not api_key:
         return None
 
@@ -176,7 +177,7 @@ def generate_greetings(config: dict) -> int:
     jobs = get_jobs_by_status(db, "approved")
 
     if not jobs:
-        console.print("[yellow]没有需要生成招呼语的岗位[/yellow]")
+        console.print("[yellow]没有已确认的岗位可生成招呼语。请先运行 `bosshunter confirm`，或使用 `bosshunter run` 执行完整流程。[/yellow]")
         return 0
 
     resume_summary = _get_resume_summary(config)
