@@ -1,163 +1,141 @@
-"""Browser connection module - CDP Proxy connection to user's Chrome."""
+"""Browser facade backed by BossHunter's built-in Browser Runtime."""
+
+from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
-import httpx
-from rich.console import Console
+from bosshunter.browser.client import RuntimeClient
+from bosshunter.browser.runtime import ensure_runtime, get_runtime_url, set_browser_config
 
-console = Console()
-
-CDP_PROXY_URL = "http://localhost:3456"
+CDP_PROXY_URL = get_runtime_url()
 CDP_DIRECT_URL = "http://localhost:9222"
+CDP_DEFAULT_URL = "http://127.0.0.1:9222"
+NAV_TIMEOUT_MS = 15000
+
+
+def configure(config: dict[str, Any] | None = None) -> None:
+    """Set process-wide browser configuration used by runtime helpers."""
+    set_browser_config(config)
+
+
+def _client() -> RuntimeClient:
+    return RuntimeClient()
+
+
+def _ready() -> bool:
+    return ensure_runtime()
 
 
 def check_chrome_connection() -> dict | None:
-    """Check if Chrome debug port is accessible via CDP Proxy."""
-    try:
-        resp = httpx.get(f"{CDP_PROXY_URL}/health", timeout=3)
-        if resp.status_code == 200:
-            return resp.json()
-    except (httpx.ConnectError, httpx.TimeoutException):
-        pass
-    # Fallback: try direct CDP
-    try:
-        resp = httpx.get(f"{CDP_DIRECT_URL}/json/version", timeout=3)
-        if resp.status_code == 200:
-            return resp.json()
-    except (httpx.ConnectError, httpx.TimeoutException):
-        pass
-    return None
+    """Check whether Browser Runtime can connect to Chrome."""
+    if not _ready():
+        return None
+    return _client().health()
 
 
 def get_page_targets() -> list[dict]:
-    """Get list of page targets from CDP Proxy."""
-    try:
-        resp = httpx.get(f"{CDP_PROXY_URL}/targets", timeout=5)
-        if resp.status_code == 200:
-            return resp.json()
-    except (httpx.ConnectError, httpx.TimeoutException):
-        pass
-    return []
+    """Get page targets from Browser Runtime."""
+    if not _ready():
+        return []
+    return _client().targets()
 
 
 def find_boss_tab() -> dict | None:
     """Find a BOSS直聘 tab in Chrome."""
-    targets = get_page_targets()
-    for target in targets:
-        url = target.get("url", "")
-        if "zhipin.com" in url:
+    for target in get_page_targets():
+        if "zhipin.com" in target.get("url", ""):
             return target
     return None
 
 
 def new_tab(url: str) -> str | None:
-    """Open a new tab and return target ID."""
-    try:
-        resp = httpx.get(f"{CDP_PROXY_URL}/new", params={"url": url}, timeout=15)
-        if resp.status_code == 200:
-            data = resp.json()
-            return data.get("targetId")
-    except (httpx.ConnectError, httpx.TimeoutException):
-        pass
-    return None
+    """Open a new background tab and return target ID."""
+    if not _ready():
+        return None
+    return _client().new_tab(url)
 
 
 def close_tab(target_id: str) -> bool:
     """Close a tab by target ID."""
-    try:
-        resp = httpx.get(f"{CDP_PROXY_URL}/close", params={"target": target_id}, timeout=5)
-        return resp.status_code == 200
-    except (httpx.ConnectError, httpx.TimeoutException):
+    if not _ready():
         return False
+    return _client().close_tab(target_id)
 
 
 def navigate(target_id: str, url: str) -> bool:
     """Navigate a tab to a URL."""
-    try:
-        resp = httpx.get(
-            f"{CDP_PROXY_URL}/navigate",
-            params={"target": target_id, "url": url},
-            timeout=15
-        )
-        return resp.status_code == 200
-    except (httpx.ConnectError, httpx.TimeoutException):
+    if not _ready():
         return False
+    return _client().navigate(target_id, url)
 
 
 def evaluate(target_id: str, expression: str, timeout: float = 30) -> Any:
-    """Execute JavaScript in a tab."""
-    try:
-        resp = httpx.post(
-            f"{CDP_PROXY_URL}/eval",
-            params={"target": target_id},
-            content=expression,
-            timeout=timeout
-        )
-        if resp.status_code == 200:
-            if not resp.content:
-                return None
-            try:
-                data = resp.json()
-            except (ValueError, TypeError):
-                return None
-            return data.get("value")
-        else:
-            # Non-200: try to parse error
-            try:
-                return resp.json()
-            except Exception:
-                return None
-    except (httpx.ConnectError, httpx.TimeoutException):
-        pass
-    return None
+    """Execute JavaScript in a tab and return the runtime value."""
+    if not _ready():
+        return None
+    return _client().evaluate(target_id, expression, timeout)
 
 
 def click(target_id: str, selector: str) -> bool:
-    """Click an element by CSS selector."""
-    try:
-        resp = httpx.post(
-            f"{CDP_PROXY_URL}/click",
-            params={"target": target_id},
-            content=selector,
-            timeout=10
-        )
-        return resp.status_code == 200
-    except (httpx.ConnectError, httpx.TimeoutException):
+    """Click an element by CSS selector using DOM click."""
+    if not _ready():
         return False
+    return _client().click(target_id, selector)
+
+
+def click_at(target_id: str, selector_or_xy: str) -> bool:
+    """Click by selector or x,y coordinates using CDP mouse events."""
+    if not _ready():
+        return False
+    return _client().click_at(target_id, selector_or_xy)
+
+
+def type_text(target_id: str, text: str) -> bool:
+    """Insert text using CDP input events."""
+    if not _ready():
+        return False
+    return _client().type_text(target_id, text)
+
+
+def set_files(target_id: str, selector: str, files: list[str]) -> bool:
+    """Set files on a file input."""
+    if not _ready():
+        return False
+    return _client().set_files(target_id, selector, files)
 
 
 def scroll(target_id: str, y: int = 0, direction: str = "") -> bool:
     """Scroll a page."""
-    try:
-        params: dict[str, Any] = {"target": target_id}
-        if direction:
-            params["direction"] = direction
-        else:
-            params["y"] = y
-        resp = httpx.get(f"{CDP_PROXY_URL}/scroll", params=params, timeout=5)
-        return resp.status_code == 200
-    except (httpx.ConnectError, httpx.TimeoutException):
+    if not _ready():
         return False
+    return _client().scroll(target_id, y=y, direction=direction)
+
+
+def screenshot(target_id: str, file_path: str | Path) -> bool:
+    """Capture a screenshot to a file."""
+    if not _ready():
+        return False
+    return _client().screenshot(target_id, file_path)
+
+
+def print_pdf(target_id: str, file_path: str | Path) -> bool:
+    """Render a target as PDF to a file."""
+    if not _ready():
+        return False
+    return _client().print_pdf(target_id, file_path)
 
 
 def get_page_info(target_id: str) -> dict | None:
-    """Get page title and URL."""
-    try:
-        resp = httpx.get(
-            f"{CDP_PROXY_URL}/info",
-            params={"target": target_id},
-            timeout=5
-        )
-        if resp.status_code == 200:
-            return resp.json()
-    except (httpx.ConnectError, httpx.TimeoutException):
-        pass
-    return None
+    """Get page title, URL, and ready state."""
+    if not _ready():
+        return None
+    return _client().info(target_id)
 
 
 def wait_for_load(target_id: str, timeout: float = 10.0) -> bool:
-    """Wait for page to finish loading."""
+    """Wait for page ready state to become complete."""
     start = time.time()
     while time.time() - start < timeout:
         info = get_page_info(target_id)

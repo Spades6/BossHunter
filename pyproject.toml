@@ -27,6 +27,13 @@ pdf = [
 [project.scripts]
 bosshunter = "bosshunter.main:cli"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/bosshunter"]
+artifacts = [
+    "src/bosshunter/browser/runtime/*.mjs",
+    "src/bosshunter/browser/runtime/site-patterns/*.md",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

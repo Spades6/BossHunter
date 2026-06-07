@@ -80,6 +80,15 @@ DEFAULTS: dict[str, Any] = {
     "dedup": {
         "history_file": "./data/history.jsonl",
     },
+    "browser": {
+        "runtime": "builtin",
+        "proxy_host": "127.0.0.1",
+        "proxy_port": 3456,
+        "chrome_ports": [9222, 9229, 9333],
+        "auto_start_proxy": True,
+        "enable_port_guard": True,
+        "site_patterns": True,
+    },
 }
 
 

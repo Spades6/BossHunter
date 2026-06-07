@@ -6,6 +6,7 @@ from pathlib import Path
 from rich.console import Console
 
 from bosshunter.ai.credentials import get_anthropic_api_key
+from bosshunter.browser import close_tab, new_tab, print_pdf
 from bosshunter.db import get_db
 
 console = Console()
@@ -125,65 +126,30 @@ def _render_pdf(markdown_text: str, output_path: Path) -> bool:
 
 
 def _render_pdf_via_cdp(html_content: str, output_path: Path) -> bool:
-    """Use Chrome CDP Page.printToPDF via proxy /pdf endpoint."""
-    try:
-        import httpx
-    except ImportError:
-        return False
-
+    """Use Browser Runtime Page.printToPDF via the Python browser facade."""
     import tempfile
     import time
 
-    CDP_PROXY_URL = "http://localhost:3456"
-
-    try:
-        # Check proxy is alive
-        resp = httpx.get(f"{CDP_PROXY_URL}/health", timeout=3)
-        if resp.status_code != 200:
-            return False
-    except (httpx.ConnectError, httpx.TimeoutException):
-        return False
-
-    # Write HTML to temp file
     temp_html = Path(tempfile.gettempdir()) / "bosshunter_resume.html"
     temp_html.write_text(html_content, encoding="utf-8")
     file_url = f"file:///{temp_html.as_posix()}"
 
     target_id = None
     try:
-        # Open blank tab and navigate to HTML file
-        resp = httpx.get(f"{CDP_PROXY_URL}/new?url={file_url}", timeout=15)
-        if resp.status_code != 200:
-            return False
-        target_id = resp.json().get("targetId")
+        target_id = new_tab(file_url)
         if not target_id:
             return False
 
         time.sleep(2)
-
-        # Export PDF via proxy /pdf endpoint
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        pdf_file = str(output_path.resolve()).replace("\\", "/")
-        resp = httpx.get(
-            f"{CDP_PROXY_URL}/pdf?target={target_id}&file={pdf_file}",
-            timeout=30
-        )
-
-        if resp.status_code == 200:
-            # Verify file was created
-            if output_path.exists() and output_path.stat().st_size > 0:
-                return True
-
+        if print_pdf(target_id, output_path):
+            return output_path.exists() and output_path.stat().st_size > 0
         return False
     except Exception:
         return False
     finally:
-        # Clean up
         if target_id:
-            try:
-                httpx.get(f"{CDP_PROXY_URL}/close?target={target_id}", timeout=5)
-            except Exception:
-                pass
+            close_tab(target_id)
         temp_html.unlink(missing_ok=True)
 
 

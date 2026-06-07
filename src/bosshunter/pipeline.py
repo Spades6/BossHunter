@@ -2,18 +2,20 @@
 
 from rich.console import Console
 
-from bosshunter.browser import check_chrome_connection, find_boss_tab
+from bosshunter.browser import check_chrome_connection, configure, find_boss_tab
 
 console = Console()
 
 
 def run_pipeline(config: dict) -> None:
     """Run the full pipeline: scrape → score → confirm → greet → send → monitor."""
-    # Step 1: Check Chrome connection
-    console.print("[bold]Step 1/6: 检测浏览器连接[/bold]")
+    configure(config)
+
+    # Step 1: Check Browser Runtime connection
+    console.print("[bold]Step 1/6: 检测 Browser Runtime[/bold]")
     version_info = check_chrome_connection()
     if not version_info:
-        console.print("[red]✗ Chrome 未连接，请确保带 --remote-debugging-port=9222 启动[/red]")
+        console.print("[red]✗ Browser Runtime 未连接，请先运行 bosshunter connect 查看诊断[/red]")
         return
 
     boss_tab = find_boss_tab()

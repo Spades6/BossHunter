@@ -50,6 +50,8 @@ def cli(ctx: click.Context, config_path: str | None) -> None:
     ctx.ensure_object(dict)
     path = Path(config_path) if config_path else None
     ctx.obj["config"] = load_config(path)
+    from bosshunter.browser import configure
+    configure(ctx.obj["config"])
 
     # First run: no subcommand and no config → prompt setup
     if ctx.invoked_subcommand is None:
@@ -64,25 +66,15 @@ def cli(ctx: click.Context, config_path: str | None) -> None:
 @cli.command()
 @click.pass_context
 def connect(ctx: click.Context) -> None:
-    """检测并连接到Chrome浏览器（CDP模式）"""
-    from bosshunter.browser import check_chrome_connection, find_boss_tab
+    """检测 BossHunter Browser Runtime 与 Chrome 连接"""
+    from bosshunter.browser import configure
+    from bosshunter.browser.diagnostics import print_browser_diagnostics
 
-    console.print("[bold]正在检测 Chrome 连接...[/bold]")
-
-    version_info = check_chrome_connection()
-    if not version_info:
-        console.print("[red]✗[/red] 无法连接到 Chrome 调试端口")
-        console.print("  请确保 Chrome 启动时带有参数: --remote-debugging-port=9222")
+    config = ctx.obj["config"]
+    configure(config)
+    ok = print_browser_diagnostics(config, console)
+    if not ok:
         raise SystemExit(1)
-
-    browser_name = version_info.get("Browser", version_info.get("status", "OK"))
-    console.print(f"[green]✓[/green] Chrome 已连接 (CDP Proxy): {browser_name}")
-
-    boss_tab = find_boss_tab()
-    if boss_tab:
-        console.print(f"[green]✓[/green] 发现 BOSS直聘 页面: {boss_tab.get('title', '')}")
-    else:
-        console.print("[yellow]![/yellow] 未发现 BOSS直聘 页面，请在 Chrome 中打开 www.zhipin.com 并登录")
 
     console.print("\n[bold green]连接检测完成[/bold green]")
 

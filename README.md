@@ -78,11 +78,11 @@
 
 ### 一、前置准备
 
-1. **安装 Chrome 调试工具**
-   确保 Chrome 以远程调试模式启动（BossHunter 通过 CDP 协议操作浏览器）
+1. **安装 Node.js 与开启 Chrome 调试**
+   BossHunter 内置 Browser Runtime（本地 CDP 代理），运行时仍需要 Node.js 22+ 与 Chrome 远程调试能力。
 
 2. **登录 Chrome**
-   打开 Chrome，允许工具操作浏览器
+   打开 Chrome，允许 BossHunter Browser Runtime 操作浏览器
 
 3. **登录某直聘**
    在 Chrome 中打开某直聘并完成登录
@@ -307,6 +307,10 @@ A: Markdown 格式。AI 会根据具体岗位 JD 动态定制简历内容。
 A: 项目通过 CDP (Chrome DevTools Protocol) 直连你日常使用的浏览器，天然携带登录态，无需额外模拟登录流程。
 
 ---
+
+## 贡献者
+
+感谢 [@GioiaZheng](https://github.com/GioiaZheng) 对 BossHunter 的早期贡献。她提交了多项高质量问题报告与修复 PR，帮助项目改进了配置安全、环境变量兼容性、安装体验、流程文档和岗位状态流转逻辑。
 
 ## 贡献
 

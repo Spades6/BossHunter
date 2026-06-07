@@ -19,7 +19,7 @@ class CDPSession:
 
     def connect(self) -> bool:
         """Connect to Chrome via CDP. Returns True if successful."""
-        version_info = check_chrome_connection(self._cdp_url)
+        version_info = check_chrome_connection()
         if not version_info:
             return False
 
