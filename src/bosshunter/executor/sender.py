@@ -5,8 +5,8 @@ import json
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
-from bosshunter.browser import new_tab, close_tab, evaluate, click, wait_for_load
-from bosshunter.db import get_db, get_jobs_by_status, update_job_status, add_history, add_risk_event
+from bosshunter.browser import new_tab, close_tab, evaluate
+from bosshunter.db import get_db, get_jobs_ready_to_send, update_job_status, add_history, add_risk_event
 from bosshunter.throttle import RequestThrottle, SendWindowChecker, ProgressiveBackoff, should_take_day_off
 
 console = Console()
@@ -50,7 +50,7 @@ JS_SEND_GREETING = """
 
 
 def send_greetings(config: dict, force: bool = False) -> int:
-    """Send greetings to approved jobs. Returns count of successfully sent."""
+    """Send generated greetings. Returns count of successfully sent."""
     db = get_db()
     throttle_config = config.get("throttle", {})
 
@@ -67,16 +67,16 @@ def send_greetings(config: dict, force: bool = False) -> int:
     window_checker = SendWindowChecker(send_windows)
     if not window_checker.is_active():
         info = window_checker.next_window_info()
-        console.print(f"[yellow]⏰ 当前不在发送时间窗口内，暂不发送[/yellow]")
+        console.print("[yellow]⏰ 当前不在发送时间窗口内，暂不发送[/yellow]")
         console.print(f"[dim]  {info}[/dim]")
         add_risk_event(db, "outside_window", info)
         db.close()
         return 0
 
-    jobs = get_jobs_by_status(db, "ready")
+    jobs = get_jobs_ready_to_send(db)
 
     if not jobs:
-        console.print("[yellow]没有待发送的岗位[/yellow]")
+        console.print("[yellow]没有已生成招呼语的待发送岗位，请先运行 bosshunter greet[/yellow]")
         db.close()
         return 0
 

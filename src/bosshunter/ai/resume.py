@@ -5,7 +5,8 @@ from pathlib import Path
 
 from rich.console import Console
 
-from bosshunter.db import get_db, get_jobs_by_status
+from bosshunter.ai.credentials import get_anthropic_api_key
+from bosshunter.db import get_db
 
 console = Console()
 
@@ -40,7 +41,7 @@ def _call_claude(prompt: str, config: dict) -> str | None:
         return None
 
     ai_cfg = config.get("ai", {})
-    api_key = os.environ.get("ANTHROPIC_AUTH_TOKEN") or ai_cfg.get("api_key")
+    api_key = get_anthropic_api_key(config)
     if not api_key:
         return None
 
@@ -255,7 +256,7 @@ def generate_tailored_resume(job_id: str, config: dict) -> Path | None:
         return pdf_path
     else:
         console.print(f"[yellow]PDF 渲染库未安装，已保存为 Markdown: {md_path}[/yellow]")
-        console.print("[dim]  安装 PDF 支持: pip install markdown2 xhtml2pdf[/dim]")
+        console.print('[dim]  安装 PDF fallback 支持: pip install -e ".[pdf]"[/dim]')
         db.execute(
             "UPDATE jobs SET resume_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (str(md_path), job_id)
