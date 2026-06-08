@@ -4,10 +4,12 @@ import { FunnelCards } from '@/components/dashboard/FunnelCards'
 import { TrendChart } from '@/components/dashboard/TrendChart'
 import { JobsTable } from '@/components/dashboard/JobsTable'
 import { TopCompanies } from '@/components/dashboard/TopCompanies'
+import { RecentActivity } from '@/components/dashboard/RecentActivity'
+import { Button } from '@/components/ui/button'
 import { RefreshCw } from 'lucide-react'
 
 export default function DashboardPage() {
-  const { funnel, activity, jobs, topCompanies, loading, refresh } = useDashboard()
+  const { funnel, activity, jobs, topCompanies, history, loading, refresh } = useDashboard()
 
   if (loading) {
     return (
@@ -37,6 +39,13 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      <div className="flex justify-end">
+        <Button variant="secondary" size="sm" onClick={refresh}>
+          <RefreshCw className="mr-2 h-4 w-4" />
+          刷新
+        </Button>
+      </div>
+
       {/* Pipeline flow */}
       <PipelineFlow />
 
@@ -50,6 +59,8 @@ export default function DashboardPage() {
         </div>
         <TopCompanies data={topCompanies} />
       </div>
+
+      <RecentActivity data={history} />
 
       {/* Jobs table */}
       <JobsTable jobs={jobs} />

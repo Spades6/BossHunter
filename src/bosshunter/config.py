@@ -31,6 +31,9 @@ CITY_CODES: dict[str, str] = {
 }
 
 
+SUPPORTED_AI_PROVIDERS = {"anthropic"}
+
+
 DEFAULTS: dict[str, Any] = {
     "profile": {
         "resume_path": "./resume.md",
@@ -101,7 +104,15 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
         with open(config_path, encoding="utf-8") as f:
             user_cfg = yaml.safe_load(f) or {}
         _deep_merge(cfg, user_cfg)
+    _validate_ai_provider(cfg)
     return cfg
+
+
+def _validate_ai_provider(config: dict[str, Any]) -> None:
+    """Fail fast when the configured AI provider is not supported."""
+    provider = config.get("ai", {}).get("provider", "anthropic")
+    if provider not in SUPPORTED_AI_PROVIDERS:
+        raise ValueError("当前版本仅支持 Anthropic，请设置 ai.provider: anthropic。")
 
 
 def _deep_copy_dict(d: dict) -> dict:

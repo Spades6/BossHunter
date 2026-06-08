@@ -53,7 +53,7 @@ def show_confirmation(config: dict) -> bool:
     choice = Prompt.ask(
         "[bold]操作[/bold]",
         choices=["a", "s", "q"],
-        default="a"
+        default="s"
     )
 
     if choice == "q":
