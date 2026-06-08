@@ -322,6 +322,15 @@ A: 项目通过 CDP (Chrome DevTools Protocol) 直连你日常使用的浏览器
 
 ---
 
+## 联系作者
+
+- 邮箱：247133278@qq.com
+- 微信：loonges
+- QQ：247133278
+- 小红书 / B站：好奇的小逸
+
+---
+
 ## License
 
 [MIT License](LICENSE)
