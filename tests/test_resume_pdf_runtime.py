@@ -24,6 +24,26 @@ class ResumeArtifactTests(unittest.TestCase):
         self.assertIn("补充说明", artifacts)
         self.assertIn("未虚构", artifacts)
 
+    def test_finds_expanded_resume_artifact_phrases(self):
+        from bosshunter.ai.resume import _find_resume_artifacts
+
+        markdown = (
+            "以下为优化后的简历。\n"
+            "本次优化根据岗位JD，结合岗位要求，匹配该岗位。\n"
+            "这是根据原始简历生成的调整后的简历，也是一份定制简历。"
+        )
+
+        artifacts = _find_resume_artifacts(markdown)
+
+        self.assertIn("以下为优化后的", artifacts)
+        self.assertIn("本次优化", artifacts)
+        self.assertIn("根据岗位JD", artifacts)
+        self.assertIn("结合岗位要求", artifacts)
+        self.assertIn("匹配该岗位", artifacts)
+        self.assertIn("根据原始简历", artifacts)
+        self.assertIn("调整后的简历", artifacts)
+        self.assertIn("定制简历", artifacts)
+
     @patch("bosshunter.ai.resume._render_pdf")
     @patch("bosshunter.ai.resume._call_claude")
     @patch("bosshunter.ai.resume.get_db")
