@@ -11,27 +11,46 @@ from bosshunter.db import get_db
 
 console = Console()
 
-RESUME_TAILOR_PROMPT = """你是一位专业简历顾问。请根据以下岗位JD调整简历的侧重点。
+RESUME_TAILOR_PROMPT = """你是一位专业简历顾问。请输出一份正常投递用的 Markdown 简历。
 
 规则：
-1. 不要虚构任何信息，只能使用原简历中已有的内容
-2. 只调整顺序、强调程度、措辞表达
-3. 输出完整的Markdown格式简历
-4. 针对岗位要求突出相关经验，弱化不相关部分
-5. 保持简历整体结构完整
+1. 只输出简历正文，不输出任何前言、说明、备注、免责声明
+2. 不要虚构任何信息，只能使用候选人简历中已有的内容
+3. 只调整顺序、强调程度、措辞表达，保持简历整体结构完整
+4. 相关优势只能自然融入个人优势、专业技能、工作经历、项目经历、个人总结等常规栏目
+5. 不允许单独新增“岗位匹配亮点”“补充说明”等解释性栏目
+6. 不允许把岗位要求里的职责写成候选人已经做过的经历
+7. 输出中不得出现“以下内容基于”“基于原始简历”“原始简历事实”“未虚构”“针对该岗位”等过程性表达
 
-## 岗位信息
+## 投递岗位
 - 职位：{title}
 - 公司：{company}
 - 薪资：{salary}
 - 核心要求：
 {jd}
 
-## 原始简历
+## 候选人简历
 {resume}
 
-请直接输出调整后的Markdown简历：
+请直接输出 Markdown 简历正文：
 """
+
+RESUME_ARTIFACT_PHRASES = [
+    "以下内容基于",
+    "基于原始简历",
+    "岗位匹配亮点",
+    "补充说明",
+    "原始简历事实",
+    "不虚构",
+    "未虚构",
+    "针对该岗位",
+    "针对本岗位",
+]
+
+
+def _find_resume_artifacts(markdown_text: str) -> list[str]:
+    """Find process-disclosure phrases that should not appear in a resume."""
+    return [phrase for phrase in RESUME_ARTIFACT_PHRASES if phrase in markdown_text]
 
 
 def _call_claude(prompt: str, config: dict) -> str | None:
@@ -192,6 +211,12 @@ def generate_tailored_resume(job_id: str, config: dict) -> Path | None:
     tailored_md = _call_claude(prompt, config)
     if not tailored_md:
         console.print("[red]生成失败[/red]")
+        db.close()
+        return None
+
+    artifacts = _find_resume_artifacts(tailored_md)
+    if artifacts:
+        console.print(f"[red]生成结果包含简历定制痕迹，已中止: {', '.join(artifacts)}[/red]")
         db.close()
         return None
 
