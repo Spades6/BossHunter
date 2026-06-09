@@ -14,6 +14,20 @@
 
 点击上方图片或访问 [B站视频链接](https://www.bilibili.com/video/BV1GUGn65EAa/) 观看完整产品介绍。
 
+## 项目演示
+
+### Web Dashboard
+
+![BossHunter Dashboard](docs/demo/dashboard.gif)
+
+### 自动投递结果
+
+![BossHunter 自动投递结果](docs/demo/pipeline-result.png)
+
+### 当日运行统计
+
+![BossHunter 当日运行统计](docs/demo/daily-summary.png)
+
 ---
 
 ## v0.3 更新日志
