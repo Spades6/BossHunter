@@ -103,6 +103,10 @@ export default function ConfigPage() {
             <Field label="排除关键词">
               <TagsInput value={config.profile?.deal_breakers || []} onChange={v => updateConfig('profile.deal_breakers', v)} placeholder="如：外包、996" />
             </Field>
+            <div className="flex items-center justify-between">
+              <label className="text-xs text-zinc-400">接受实习/管培岗位</label>
+              <Switch checked={config.profile?.allow_internship ?? false} onChange={v => updateConfig('profile.allow_internship', v)} />
+            </div>
           </div>
         </SectionCard>
 
@@ -150,9 +154,6 @@ export default function ConfigPage() {
           <div className="space-y-4">
             <Field label={`通过阈值: ${config.scoring?.threshold || 60}`}>
               <Slider value={config.scoring?.threshold || 60} onChange={v => updateConfig('scoring.threshold', v)} min={0} max={100} />
-            </Field>
-            <Field label={`预筛阈值: ${config.scoring?.prefilter_threshold || 40}`}>
-              <Slider value={config.scoring?.prefilter_threshold || 40} onChange={v => updateConfig('scoring.prefilter_threshold', v)} min={0} max={100} />
             </Field>
             <Field label="每轮最大候选数">
               <Input type="number" value={config.scoring?.max_candidates || 20} onChange={e => updateConfig('scoring.max_candidates', Number(e.target.value))} min={1} max={100} />

@@ -188,6 +188,7 @@ profile:
   salary_min: 15                   # 最低期望薪资 (K)
   salary_max: 30                   # 最高期望薪资 (K)
   deal_breakers: ["外包", "996"]   # 一票否决关键词
+  allow_internship: false          # 是否接受实习/管培岗位
 
 search:
   keywords: ["Python开发", "后端"]  # 搜索关键词
@@ -195,7 +196,6 @@ search:
 
 scoring:
   threshold: 71                    # AI 评分通过线
-  prefilter_threshold: 40          # 预筛分数线
 
 throttle:
   daily_limit: 30                  # 每日发送上限

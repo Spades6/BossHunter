@@ -9,6 +9,7 @@ profile:
   salary_min: 15  # K
   salary_max: 25  # K
   deal_breakers: ["外包", "996"]
+  allow_internship: false
   # 可选：个人亮点（用于招呼语生成）
   extra_highlights:
     - "你的核心竞争力描述"
@@ -24,7 +25,6 @@ search:
 
 scoring:
   threshold: 70
-  prefilter_threshold: 40
   max_candidates: 20
 
 throttle:

@@ -42,6 +42,7 @@ DEFAULTS: dict[str, Any] = {
         "salary_min": 0,
         "salary_max": 0,
         "deal_breakers": [],
+        "allow_internship": False,
     },
     "search": {
         "keywords": [],
@@ -51,7 +52,6 @@ DEFAULTS: dict[str, Any] = {
     },
     "scoring": {
         "threshold": 71,
-        "prefilter_threshold": 40,
         "max_candidates": 20,
     },
     "throttle": {

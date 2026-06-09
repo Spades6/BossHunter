@@ -231,9 +231,9 @@ bosshunter status --full        # 完整仪表盘
 
 | 配置段 | 关键字段 | 说明 |
 |--------|---------|------|
-| `profile` | `resume_path`, `salary_min/max`, `deal_breakers` | 个人信息与排除条件 |
+| `profile` | `resume_path`, `salary_min/max`, `deal_breakers`, `allow_internship` | 个人信息与排除条件 |
 | `search` | `keywords`, `cities`, `max_pages` | 搜索策略 |
-| `scoring` | `threshold`, `prefilter_threshold` | 评分阈值（默认71分通过） |
+| `scoring` | `threshold` | AI 评分通过阈值（默认71分通过） |
 | `throttle` | `daily_limit`, `interval_min/max`, `send_windows` | 反检测策略 |
 | `ai` | `provider`, `model`, `api_key` | AI 服务配置 |
 | `monitor` | `interval`, `max_resume_sends_per_cycle` | 监听设置 |

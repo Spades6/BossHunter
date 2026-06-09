@@ -87,7 +87,6 @@ def score_jobs(config: dict) -> tuple[int, int]:
         return 0, 0
 
     threshold = config.get("scoring", {}).get("threshold", 60)
-    prefilter_threshold = config.get("scoring", {}).get("prefilter_threshold", 40)
     pending_jobs = get_jobs_by_status(db, "pending")
 
     if not pending_jobs:
@@ -110,7 +109,7 @@ def score_jobs(config: dict) -> tuple[int, int]:
             qs, qs_reason = quick_score(job, config)
             update_job_quick_score(db, job["id"], qs)
 
-            if qs < prefilter_threshold:
+            if qs == 0:
                 update_job_score(db, job["id"], qs, f"预筛不通过: {qs_reason}")
                 update_job_status(db, job["id"], "filtered")
                 filtered += 1
