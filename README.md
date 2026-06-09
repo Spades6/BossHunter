@@ -27,7 +27,7 @@
 
 ### AI/API 兼容性
 
-- **API 兼容修复**：支持 `ai.auth_token` 与 `ANTHROPIC_AUTH_TOKEN`，并能根据 API `/v1/models` 结果自动解析可用模型名。
+- **API 兼容修复**：支持 `ai.auth_token` 与 `ANTHROPIC_AUTH_TOKEN`，并能根据兼容 API `/v1/models` 结果自动解析可用模型名。
 - **模型解析更稳**：模型解析结果带缓存，失败结果也缓存，并按凭证隔离，避免重复请求与串号。
 - **AI 调用统一**：评分、招呼语、简历生成等路径统一通过 `call_anthropic_text()`，减少多处重复 API 逻辑。
 - **Provider fail-fast**：配置为非 Anthropic provider 时直接报清楚，不再静默走到后续错误。

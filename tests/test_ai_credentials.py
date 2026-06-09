@@ -48,7 +48,7 @@ class AnthropicCredentialTests(unittest.TestCase):
             {
                 "ANTHROPIC_API_KEY": "from-api-key",
                 "ANTHROPIC_AUTH_TOKEN": "from-auth-token",
-                "ANTHROPIC_BASE_URL": "https://api-comate.baidu-int.com",
+                "ANTHROPIC_BASE_URL": "https://api-gateway.example.com",
             },
             clear=True,
         ):
@@ -61,7 +61,7 @@ class AnthropicCredentialTests(unittest.TestCase):
 
         self.assertEqual(result["api_key"], "from-api-key")
         self.assertEqual(result["auth_token"], "from-auth-token")
-        self.assertEqual(result["base_url"], "https://api-comate.baidu-int.com")
+        self.assertEqual(result["base_url"], "https://api-gateway.example.com")
 
     def test_build_anthropic_client_kwargs_does_not_duplicate_auth_token_as_api_key(self):
         with patch.dict("os.environ", {}, clear=True):
@@ -70,12 +70,12 @@ class AnthropicCredentialTests(unittest.TestCase):
         self.assertNotIn("api_key", result)
         self.assertEqual(result["auth_token"], "from-config-token")
 
-    def test_api_model_cache_key_does_not_store_raw_credentials(self):
+    def test_compatible_api_model_cache_key_does_not_store_raw_credentials(self):
         with (
             patch.dict(
                 "os.environ",
                 {
-                    "ANTHROPIC_BASE_URL": "https://api-comate.baidu-int.com",
+                    "ANTHROPIC_BASE_URL": "https://api-gateway.example.com",
                     "ANTHROPIC_AUTH_TOKEN": "very-secret-token",
                 },
                 clear=True,
@@ -88,7 +88,7 @@ class AnthropicCredentialTests(unittest.TestCase):
         self.assertEqual(len(cache_keys), 1)
         self.assertNotIn("very-secret-token", cache_keys[0])
 
-    def test_resolves_api_model_name_from_available_models(self):
+    def test_resolves_compatible_api_model_name_from_available_models(self):
         class ModelsResponse:
             def raise_for_status(self):
                 pass
@@ -100,7 +100,7 @@ class AnthropicCredentialTests(unittest.TestCase):
             patch.dict(
                 "os.environ",
                 {
-                    "ANTHROPIC_BASE_URL": "https://api-comate.baidu-int.com",
+                    "ANTHROPIC_BASE_URL": "https://api-gateway.example.com",
                     "ANTHROPIC_API_KEY": "from-api-key",
                     "ANTHROPIC_AUTH_TOKEN": "from-auth-token",
                 },
@@ -112,12 +112,12 @@ class AnthropicCredentialTests(unittest.TestCase):
 
         self.assertEqual(result, "Claude Sonnet 4.6")
 
-    def test_caches_api_model_resolution_failures(self):
+    def test_caches_compatible_api_model_resolution_failures(self):
         with (
             patch.dict(
                 "os.environ",
                 {
-                    "ANTHROPIC_BASE_URL": "https://api-comate.baidu-int.com",
+                    "ANTHROPIC_BASE_URL": "https://api-gateway.example.com",
                     "ANTHROPIC_AUTH_TOKEN": "token-a",
                 },
                 clear=True,
@@ -131,7 +131,7 @@ class AnthropicCredentialTests(unittest.TestCase):
         self.assertEqual(second, "claude-sonnet-4-6")
         self.assertEqual(models_get.call_count, 1)
 
-    def test_api_model_cache_is_separated_by_auth_token(self):
+    def test_compatible_api_model_cache_is_separated_by_auth_token(self):
         class ModelsResponse:
             def __init__(self, model):
                 self.model = model
@@ -145,7 +145,7 @@ class AnthropicCredentialTests(unittest.TestCase):
         with patch.dict(
             "os.environ",
             {
-                "ANTHROPIC_BASE_URL": "https://api-comate.baidu-int.com",
+                "ANTHROPIC_BASE_URL": "https://api-gateway.example.com",
                 "ANTHROPIC_AUTH_TOKEN": "token-a",
             },
             clear=True,
@@ -156,7 +156,7 @@ class AnthropicCredentialTests(unittest.TestCase):
         with patch.dict(
             "os.environ",
             {
-                "ANTHROPIC_BASE_URL": "https://api-comate.baidu-int.com",
+                "ANTHROPIC_BASE_URL": "https://api-gateway.example.com",
                 "ANTHROPIC_AUTH_TOKEN": "token-b",
             },
             clear=True,
@@ -184,7 +184,7 @@ class AnthropicCredentialTests(unittest.TestCase):
         with (
             patch.dict("os.environ", {}, clear=True),
             patch.object(credentials, "resolve_anthropic_model", lambda model, config: "Claude Sonnet 4.6", create=True),
-            patch.object(credentials, "build_anthropic_client_kwargs", lambda config: {"api_key": "key", "auth_token": "token", "base_url": "https://api"}, create=True),
+            patch.object(credentials, "build_anthropic_client_kwargs", lambda config: {"api_key": "key", "auth_token": "token", "base_url": "https://api-gateway.example.com"}, create=True),
             patch.dict("sys.modules", {"anthropic": SimpleNamespace(Anthropic=Client)}),
         ):
             result = call_text("prompt", {"ai": {"model": "claude-sonnet-4-6", "api_key": "key", "auth_token": "token"}}, 123)

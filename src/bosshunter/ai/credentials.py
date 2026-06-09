@@ -41,10 +41,10 @@ def build_anthropic_client_kwargs(config: dict) -> dict:
 
 
 def resolve_anthropic_model(model: str, config: dict) -> str:
-    """Resolve configured model name against API model IDs when needed."""
+    """Resolve configured model name against compatible API model IDs when needed."""
     ai_cfg = config.get("ai", {}) if isinstance(config, dict) else {}
     base_url = os.environ.get("ANTHROPIC_BASE_URL") or ai_cfg.get("base_url")
-    if not base_url or "api" not in base_url.lower():
+    if not base_url:
         return model
 
     auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN") or ai_cfg.get("auth_token")

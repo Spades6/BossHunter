@@ -9,6 +9,33 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class PublicPrivacyTests(unittest.TestCase):
+    def test_tracked_files_do_not_reference_company_api_brand(self):
+        import subprocess
+
+        blocked = "one" + "api"
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        offenders = []
+        for rel_path in result.stdout.splitlines():
+            path = ROOT / rel_path
+            if not path.is_file():
+                continue
+            try:
+                source = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            if blocked in source.lower():
+                offenders.append(rel_path)
+
+        self.assertEqual(offenders, [])
+
+
 class VersionMetadataTests(unittest.TestCase):
     def test_release_version_is_consistent(self):
         import json
