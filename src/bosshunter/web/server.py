@@ -12,6 +12,7 @@ from pathlib import Path
 
 from bottle import Bottle, request, response, static_file, abort
 
+from bosshunter import __version__
 from bosshunter.config import load_config, CITY_CODES
 from bosshunter.db import (
 	get_db, get_stats, get_funnel_stats, get_daily_activity,
@@ -95,7 +96,7 @@ def _sanitize_config_for_write(data):
 
 @app.route("/api/health")
 def health():
-	return _json_response({"status": "ok", "version": "1.1.0"})
+	return _json_response({"status": "ok", "version": __version__})
 
 
 # ─── Dashboard APIs ──────────────────────────────────────

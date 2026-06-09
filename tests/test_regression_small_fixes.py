@@ -9,6 +9,34 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class VersionMetadataTests(unittest.TestCase):
+    def test_release_version_is_consistent(self):
+        import json
+
+        import bosshunter
+        from bosshunter.web.server import health
+
+        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+        sidebar_source = (
+            ROOT
+            / "src"
+            / "bosshunter"
+            / "web"
+            / "frontend"
+            / "src"
+            / "components"
+            / "layout"
+            / "Sidebar.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('version = "0.3.0"', pyproject)
+        self.assertEqual(bosshunter.__version__, "0.3.0")
+        self.assertEqual(json.loads(health())["version"], "0.3.0")
+        self.assertIn("v0.3 · 本地服务", sidebar_source)
+        self.assertNotIn("v1.1.0", sidebar_source)
+
+
 class ConfigExampleTests(unittest.TestCase):
     def test_example_uses_search_cities_list(self):
         config = yaml.safe_load((ROOT / "config.example.yaml").read_text(encoding="utf-8"))
