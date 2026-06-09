@@ -78,6 +78,38 @@ class WebConfigApiTests(unittest.TestCase):
 		self.assertEqual(cleaned["ai"]["api_key"], "sk-ant-new")
 		self.assertNotIn("api_key_masked", cleaned["ai"])
 
+	def test_redacted_config_does_not_return_raw_auth_token(self):
+		config = {"ai": {"auth_token": "auth-token-12345678", "model": "claude"}}
+
+		redacted = server._redact_config_for_response(config)
+
+		self.assertNotIn("auth_token", redacted["ai"])
+		self.assertEqual(redacted["ai"]["auth_token_masked"], "auth***5678")
+		self.assertEqual(config["ai"]["auth_token"], "auth-token-12345678")
+
+	def test_sanitize_config_strips_auth_token_display_fields_and_preserves_blank_token(self):
+		with tempfile.TemporaryDirectory() as tmp:
+			config_path = Path(tmp) / "config.yaml"
+			config_path.write_text(
+				yaml.dump({"ai": {"auth_token": "auth-token-12345678", "model": "old"}}, sort_keys=False),
+				encoding="utf-8",
+			)
+
+			with patch.object(server, "CONFIG_PATH", config_path):
+				cleaned = server._sanitize_config_for_write({
+					"ai": {
+						"auth_token": "",
+						"auth_token_masked": "auth***5678",
+						"has_auth_token": True,
+						"model": "new",
+					}
+				})
+
+		self.assertEqual(cleaned["ai"]["auth_token"], "auth-token-12345678")
+		self.assertEqual(cleaned["ai"]["model"], "new")
+		self.assertNotIn("auth_token_masked", cleaned["ai"])
+		self.assertNotIn("has_auth_token", cleaned["ai"])
+
 
 if __name__ == "__main__":
 	unittest.main()

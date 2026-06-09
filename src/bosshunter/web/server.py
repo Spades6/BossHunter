@@ -53,6 +53,9 @@ def _redact_config_for_response(config):
 		key = ai_cfg.pop("api_key", None)
 		if key:
 			ai_cfg["api_key_masked"] = _mask_api_key(str(key))
+		auth_token = ai_cfg.pop("auth_token", None)
+		if auth_token:
+			ai_cfg["auth_token_masked"] = _mask_api_key(str(auth_token))
 	return redacted
 
 
@@ -65,21 +68,25 @@ def _sanitize_config_for_write(data):
 
 	ai_cfg.pop("api_key_masked", None)
 	ai_cfg.pop("has_api_key", None)
+	ai_cfg.pop("auth_token_masked", None)
+	ai_cfg.pop("has_auth_token", None)
 
-	posted_key = ai_cfg.get("api_key")
-	existing_key = load_config(CONFIG_PATH).get("ai", {}).get("api_key")
-	existing_mask = _mask_api_key(str(existing_key)) if existing_key else ""
-	should_preserve = (
-		posted_key is None
-		or str(posted_key).strip() == ""
-		or (existing_mask and posted_key == existing_mask)
-	)
+	existing_ai = load_config(CONFIG_PATH).get("ai", {})
+	for field in ("api_key", "auth_token"):
+		posted_value = ai_cfg.get(field)
+		existing_value = existing_ai.get(field)
+		existing_mask = _mask_api_key(str(existing_value)) if existing_value else ""
+		should_preserve = (
+			posted_value is None
+			or str(posted_value).strip() == ""
+			or (existing_mask and posted_value == existing_mask)
+		)
 
-	if should_preserve:
-		if existing_key:
-			ai_cfg["api_key"] = existing_key
-		else:
-			ai_cfg.pop("api_key", None)
+		if should_preserve:
+			if existing_value:
+				ai_cfg[field] = existing_value
+			else:
+				ai_cfg.pop(field, None)
 
 	return cleaned
 

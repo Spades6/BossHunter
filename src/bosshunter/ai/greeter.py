@@ -1,13 +1,12 @@
 """AI Greeter - Generate personalized greeting messages with self-review."""
 
-import os
 import json
 from pathlib import Path
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from bosshunter.ai.credentials import get_anthropic_api_key
+from bosshunter.ai.credentials import call_anthropic_text
 from bosshunter.db import get_db, get_jobs_by_status, update_job_greeting, update_job_status
 
 console = Console()
@@ -72,35 +71,7 @@ def _get_resume_summary(config: dict) -> str:
 def _call_claude(prompt: str, config: dict) -> str | None:
     """Call Claude API and return response text."""
     try:
-        import anthropic
-    except ImportError:
-        return None
-
-    ai_cfg = config.get("ai", {})
-    api_key = get_anthropic_api_key(config)
-    if not api_key:
-        return None
-
-    model = ai_cfg.get("model", "claude-sonnet-4-6")
-    base_url = os.environ.get("ANTHROPIC_BASE_URL") or ai_cfg.get("base_url")
-
-    kwargs = {"api_key": api_key}
-    if base_url:
-        kwargs["base_url"] = base_url
-
-    client = anthropic.Anthropic(**kwargs)
-
-    try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        # Skip ThinkingBlock, find TextBlock
-        for block in response.content:
-            if hasattr(block, 'text'):
-                return block.text.strip()
-        return None
+        return call_anthropic_text(prompt, config, 300)
     except Exception as e:
         console.print(f"[red]API 调用失败: {e}[/red]")
         return None

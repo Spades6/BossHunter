@@ -1,13 +1,12 @@
 """AI Scorer - Match jobs against resume using Claude API."""
 
-import os
 import json
 from pathlib import Path
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from bosshunter.ai.credentials import get_anthropic_api_key
+from bosshunter.ai.credentials import call_anthropic_text, get_anthropic_api_key
 from bosshunter.db import get_db, get_jobs_by_status, update_job_score, update_job_status, update_job_quick_score
 from bosshunter.ai.prefilter import quick_score
 
@@ -50,37 +49,17 @@ def _load_resume(config: dict) -> str:
 def _call_claude(prompt: str, config: dict) -> str | None:
     """Call Claude API and return response text."""
     try:
-        import anthropic
+        import anthropic  # noqa: F401
     except ImportError:
         console.print("[red]需要安装 anthropic 包: pip install anthropic[/red]")
         return None
 
-    ai_cfg = config.get("ai", {})
-    api_key = get_anthropic_api_key(config)
-    if not api_key:
+    if not get_anthropic_api_key(config):
         console.print("[red]未设置 ANTHROPIC_API_KEY 环境变量或 config.yaml ai.api_key[/red]")
         return None
 
-    model = ai_cfg.get("model", "claude-sonnet-4-6")
-    base_url = os.environ.get("ANTHROPIC_BASE_URL") or ai_cfg.get("base_url")
-
-    kwargs = {"api_key": api_key}
-    if base_url:
-        kwargs["base_url"] = base_url
-
-    client = anthropic.Anthropic(**kwargs)
-
     try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=256,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        # Skip ThinkingBlock, find TextBlock
-        for block in response.content:
-            if hasattr(block, 'text'):
-                return block.text
-        return None
+        return call_anthropic_text(prompt, config, 256)
     except Exception as e:
         console.print(f"[red]API 调用失败: {e}[/red]")
         return None
