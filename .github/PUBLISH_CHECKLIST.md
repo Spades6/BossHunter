@@ -79,7 +79,7 @@
 - [x] SKILL.md — Skill 行为定义
 - [x] config.example.yaml — 脱敏配置模板
 - [x] resume.example.md — 简历模板
-- [x] LICENSE — MIT + 额外免责
+- [x] LICENSE — 非商业使用许可 + 额外免责
 - [ ] CONTRIBUTING.md — 贡献指南（可选 Phase 2）
 - [ ] CHANGELOG.md — 版本记录（可选 Phase 2）
 

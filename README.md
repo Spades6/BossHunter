@@ -273,7 +273,7 @@ bosshunter status --full        # 完整仪表盘
 BossHunter/
 ├── SKILL.md              # Skill 行为定义（Claude Code 加载）
 ├── README.md             # 本文件
-├── LICENSE               # MIT License
+├── LICENSE               # Non-commercial license
 ├── config.example.yaml   # 配置模板（脱敏）
 ├── pyproject.toml        # Python 包定义
 ├── .gitignore            # 安全排除规则
@@ -359,7 +359,9 @@ A: 项目通过 CDP (Chrome DevTools Protocol) 直连你日常使用的浏览器
 
 ## License
 
-[MIT License](LICENSE)
+[BossHunter Non-Commercial License](LICENSE)
+
+本项目仅限个人学习、研究与非商业自用。未经作者书面许可，禁止任何商业使用、转售、SaaS 化、商业集成或以本项目为基础提供付费服务。
 
 ---
 
