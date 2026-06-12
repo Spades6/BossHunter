@@ -138,14 +138,9 @@ export default function ConfigPage() {
                 })}
               </div>
             </Field>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="薪资范围">
-                <Input value={config.search?.salary_range || ''} onChange={e => updateConfig('search.salary_range', e.target.value)} placeholder="如 15-25K" />
-              </Field>
-              <Field label="每关键词翻页数">
-                <Input type="number" value={config.search?.max_pages || 3} onChange={e => updateConfig('search.max_pages', Number(e.target.value))} min={1} max={10} />
-              </Field>
-            </div>
+            <Field label="每关键词翻页数">
+              <Input type="number" value={config.search?.max_pages || 3} onChange={e => updateConfig('search.max_pages', Number(e.target.value))} min={1} max={10} />
+            </Field>
           </div>
         </SectionCard>
 

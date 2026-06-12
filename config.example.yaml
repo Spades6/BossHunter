@@ -19,7 +19,6 @@ profile:
 search:
   keywords: ["关键词1", "关键词2"]
   cities: ["北京"]
-  salary_range: "15-25K"
   max_pages: 5
   sort: newest
 
