@@ -1,7 +1,6 @@
 import { useConfig } from '@/hooks/useConfig'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
 import { TagsInput } from '@/components/ui/tags-input'
@@ -195,9 +194,10 @@ export default function ConfigPage() {
         <SectionCard title="AI 设置" sectionKey="ai" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">
             <Field label="提供商">
-              <Select value={config.ai?.provider || 'anthropic'} onChange={e => updateConfig('ai.provider', e.target.value)}>
-                <option value="anthropic">Anthropic</option>
-              </Select>
+              <div className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+                Anthropic / Claude Messages 兼容接口
+              </div>
+              <p className="mt-1 text-xs text-zinc-500">当前版本固定使用 Anthropic 兼容链路；如使用兼容 API，请填写 Base URL，并在模型名称中填写目标模型，后端会按 /v1/models 做模糊匹配。</p>
             </Field>
             <Field label="模型名称">
               <Input value={config.ai?.model || ''} onChange={e => updateConfig('ai.model', e.target.value)} />

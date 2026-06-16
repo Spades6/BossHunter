@@ -73,6 +73,8 @@ def _sanitize_config_for_write(data):
 	ai_cfg.pop("has_auth_token", None)
 
 	existing_ai = load_config(CONFIG_PATH).get("ai", {})
+	ai_cfg["provider"] = "anthropic"
+
 	for field in ("api_key", "auth_token"):
 		posted_value = ai_cfg.get(field)
 		existing_value = existing_ai.get(field)
