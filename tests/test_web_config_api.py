@@ -78,6 +78,20 @@ class WebConfigApiTests(unittest.TestCase):
 		self.assertEqual(cleaned["ai"]["api_key"], "sk-ant-new")
 		self.assertNotIn("api_key_masked", cleaned["ai"])
 
+	def test_sanitize_config_forces_fixed_anthropic_provider(self):
+		# Arrange
+		with tempfile.TemporaryDirectory() as tmp:
+			config_path = Path(tmp) / "config.yaml"
+			config_path.write_text(yaml.dump({"ai": {"provider": "anthropic"}}, sort_keys=False), encoding="utf-8")
+
+			# Act
+			with patch.object(server, "CONFIG_PATH", config_path):
+				cleaned = server._sanitize_config_for_write({"ai": {"provider": "openai", "model": "claude-sonnet-4-6"}})
+
+		# Assert
+		self.assertEqual(cleaned["ai"]["provider"], "anthropic")
+		self.assertEqual(cleaned["ai"]["model"], "claude-sonnet-4-6")
+
 	def test_redacted_config_does_not_return_raw_auth_token(self):
 		config = {"ai": {"auth_token": "auth-token-12345678", "model": "claude"}}
 
