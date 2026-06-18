@@ -1,51 +1,57 @@
-"""Pre-filter module - hard gate filtering before LLM evaluation."""
+"""Pre-filter module - hard filtering before LLM evaluation."""
 
 import re
 
+from bosshunter.job_filters import matching_deal_breaker
 
-INTERNSHIP_KEYWORDS = ("实习", "intern", "internship", "管培")
+
+_INTERNSHIP_KEYWORDS = ("实习", "intern", "internship", "管培")
 
 
 def quick_score(job: dict, config: dict) -> tuple[int, str]:
-    """Return a hard prefilter result.
-
-    Returns:
-    - (0, reason): hard rejection, do not call the LLM.
-    - (100, "预筛通过"): pass prefilter and enter LLM scoring.
-
-    Product boundary: exclusion keywords intentionally match the job title only,
-    not the JD, to avoid rejecting jobs whose JD says things like "非外包".
-    """
+    """Apply hard filters before LLM scoring."""
     profile = config.get("profile", {})
     deal_breakers = profile.get("deal_breakers", [])
-    salary_min = profile.get("salary_min", 0)
-    allow_internship = profile.get("allow_internship", False)
+    title = job.get("title") or ""
 
-    title = (job.get("title") or "").lower()
-    salary_text = job.get("salary") or ""
+    breaker = matching_deal_breaker(title, deal_breakers)
+    if breaker:
+        return 0, f"触发排除词: {breaker}"
 
-    for breaker in deal_breakers:
-        if breaker.lower() in title:
-            return 0, f"触发排除词: {breaker}"
-
-    if not allow_internship and any(keyword in title for keyword in INTERNSHIP_KEYWORDS):
+    if not profile.get("allow_internship", False) and _contains_internship_signal(job):
         return 0, "实习/管培岗位"
 
-    if salary_text and salary_min > 0:
-        _, parsed_max = _parse_salary(salary_text)
-        if parsed_max > 0 and parsed_max < salary_min:
-            return 0, f"薪资低于硬性要求: {salary_text} < {salary_min}K"
+    salary_min = _as_number(profile.get("salary_min", 0))
+    salary_max = _parse_salary_max_k(job.get("salary") or "")
+    if salary_min > 0 and salary_max is not None and salary_max < salary_min:
+        return 0, f"薪资低于硬性要求: {_format_k(salary_max)}K < {_format_k(salary_min)}K"
 
     return 100, "预筛通过"
 
 
-def _parse_salary(salary_text: str) -> tuple[int, int]:
-    """Parse salary text like '15-25K' or '15-25K·14薪' into (min_k, max_k)."""
-    match = re.search(r"(\d+)\s*[-~]\s*(\d+)\s*[kK]", salary_text)
-    if match:
-        return int(match.group(1)), int(match.group(2))
-    match = re.search(r"(\d+)\s*[kK]", salary_text)
-    if match:
-        val = int(match.group(1))
-        return val, val
-    return 0, 0
+def _contains_internship_signal(job: dict) -> bool:
+    title = (job.get("title") or "").lower()
+    return any(keyword.lower() in title for keyword in _INTERNSHIP_KEYWORDS)
+
+
+def _parse_salary_max_k(salary: str) -> float | None:
+    range_match = re.search(r"(\d+(?:\.\d+)?)\s*[kK]?\s*-\s*(\d+(?:\.\d+)?)\s*[kK]", salary)
+    if range_match:
+        return max(float(range_match.group(1)), float(range_match.group(2)))
+
+    single_match = re.search(r"(\d+(?:\.\d+)?)\s*[kK]", salary)
+    if single_match:
+        return float(single_match.group(1))
+
+    return None
+
+
+def _as_number(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _format_k(value: float) -> str:
+    return str(int(value)) if value.is_integer() else str(value)

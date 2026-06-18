@@ -26,6 +26,34 @@ class BrowserDiagnosticsTests(unittest.TestCase):
         self.assertEqual(result["boss_tab"]["title"], "BOSS直聘")
         self.assertEqual(result["runtime_url"], "http://127.0.0.1:3456")
 
+    @patch("bosshunter.browser.diagnostics.find_boss_tab")
+    @patch("bosshunter.browser.diagnostics.runtime_targets")
+    @patch("bosshunter.browser.diagnostics.runtime_health")
+    @patch("bosshunter.browser.diagnostics.ensure_runtime")
+    @patch("bosshunter.browser.diagnostics.check_node_available")
+    def test_run_browser_diagnostics_reports_updated_url_after_runtime_port_fallback(
+        self,
+        check_node,
+        ensure_runtime,
+        runtime_health,
+        runtime_targets,
+        find_boss_tab,
+    ):
+        from bosshunter.browser.diagnostics import run_browser_diagnostics
+
+        config = {"browser": {"proxy_port": 3456}}
+        check_node.return_value = {"available": True, "version": "v22.1.0"}
+        ensure_runtime.side_effect = lambda cfg: cfg["browser"].update({"proxy_port": 3457}) or True
+        runtime_health.return_value = {"status": "ok", "runtime": "bosshunter"}
+        runtime_targets.return_value = [{"targetId": "1", "url": "https://www.zhipin.com"}]
+        find_boss_tab.return_value = {"targetId": "1", "title": "BOSS直聘"}
+
+        result = run_browser_diagnostics(config)
+
+        self.assertTrue(result["runtime"])
+        self.assertEqual(result["runtime_url"], "http://127.0.0.1:3457")
+        self.assertFalse(any("Runtime port is occupied" in error for error in result["errors"]))
+
     @patch("bosshunter.browser.diagnostics.ensure_runtime")
     @patch("bosshunter.browser.diagnostics.check_node_available")
     def test_run_browser_diagnostics_reports_missing_node(self, check_node, ensure_runtime):

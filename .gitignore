@@ -35,5 +35,7 @@ node_modules/
 .DS_Store
 Thumbs.db
 
-# Claude Code
+# Claude Code / local agent notes
 .claude/
+.superpowers/
+docs/superpowers/

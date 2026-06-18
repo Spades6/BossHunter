@@ -8,6 +8,7 @@ profile:
   target_cities: ["北京"]
   salary_min: 15  # K
   salary_max: 25  # K
+  allow_internship: false
   deal_breakers: ["外包", "996"]
   allow_internship: false
   # 可选：个人亮点（用于招呼语生成）
@@ -43,13 +44,14 @@ ai:
   greeting_review_threshold: 7
   greeting_max_iterations: 2
   # api_key 通过环境变量 ANTHROPIC_API_KEY 设置，或在此填写
-  # api_key: "sk-your-api-key"
+  # api_key: "your-api-key"
   # base_url: "https://api.anthropic.com"
 
 monitor:
   interval: 30
   chat_url: "https://www.zhipin.com/web/geek/chat"
   max_resume_sends_per_cycle: 5
+  auto_reply_hr_questions: false
 
 follow_up:
   enabled: true

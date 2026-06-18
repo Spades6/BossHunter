@@ -1,24 +1,31 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ChevronDown, ChevronUp } from 'lucide-react'
+import { getStatusLabel } from '@/lib/status'
 import type { Job } from '@/hooks/useDashboard'
 
 interface JobsTableProps {
   jobs: Job[]
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  pending: '待处理',
-  scored: '已评分',
-  filtered: '已过滤',
-  approved: '已确认',
-  sent: '已发送',
-  replied: '已回复',
-  resume_sent: '简历已发',
-  follow_up_sent: '已跟进',
-  rejected: '已拒绝',
-  error: '错误',
+function statusVariant(status: string) {
+  const variants = new Set([
+    'pending',
+    'scored',
+    'filtered',
+    'ready',
+    'approved',
+    'skipped',
+    'sent',
+    'replied',
+    'resume_sent',
+    'needs_resume',
+    'follow_up_sent',
+    'rejected',
+    'error',
+  ])
+  return variants.has(status) ? status : 'default'
 }
 
 export function JobsTable({ jobs }: JobsTableProps) {
@@ -29,9 +36,9 @@ export function JobsTable({ jobs }: JobsTableProps) {
   const displayed = jobs.slice(page * pageSize, (page + 1) * pageSize)
 
   const getScoreColor = (score: number) => {
-    if (score >= 80) return 'text-green-400'
-    if (score >= 60) return 'text-blue-400'
-    return 'text-zinc-500'
+    if (score >= 80) return 'text-success'
+    if (score >= 60) return 'text-primary'
+    return 'text-muted'
   }
 
   const timeAgo = (dateStr: string) => {
@@ -47,90 +54,94 @@ export function JobsTable({ jobs }: JobsTableProps) {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>岗位列表</CardTitle>
-        <span className="text-xs text-zinc-500">{jobs.length} 条记录</span>
+        <span className="text-xs text-muted">{jobs.length} 条记录</span>
       </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-800 text-zinc-400 text-xs">
-                <th className="text-left px-4 py-3 font-medium">公司</th>
-                <th className="text-left px-4 py-3 font-medium">职位</th>
-                <th className="text-left px-4 py-3 font-medium">薪资</th>
-                <th className="text-left px-4 py-3 font-medium">评分</th>
-                <th className="text-left px-4 py-3 font-medium">状态</th>
-                <th className="text-left px-4 py-3 font-medium">时间</th>
+              <tr className="border-b border-card-border bg-[#FFF0E5] text-xs text-muted">
+                <th className="px-4 py-3 text-left font-bold">公司</th>
+                <th className="px-4 py-3 text-left font-bold">职位</th>
+                <th className="px-4 py-3 text-left font-bold">薪资</th>
+                <th className="px-4 py-3 text-left font-bold">评分</th>
+                <th className="px-4 py-3 text-left font-bold">状态</th>
+                <th className="px-4 py-3 text-left font-bold">时间</th>
               </tr>
             </thead>
             <tbody>
-              {displayed.map(job => (
-                <>
-                  <tr
-                    key={job.id}
-                    className="border-b border-zinc-800/50 hover:bg-zinc-800/30 cursor-pointer transition-colors"
-                    onClick={() => setExpanded(expanded === job.id ? null : job.id)}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-zinc-100 truncate max-w-[120px]">{job.company}</span>
-                        {job.company_size && (
-                          <span className="text-[10px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">{job.company_size}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-zinc-200 truncate max-w-[180px]">{job.title}</td>
-                    <td className="px-4 py-3 text-zinc-300">{job.salary}</td>
-                    <td className="px-4 py-3">
-                      <span className={`font-mono font-bold ${getScoreColor(job.score)}`}>{job.score || '-'}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge variant={job.status as any}>{STATUS_LABELS[job.status] || job.status}</Badge>
-                    </td>
-                    <td className="px-4 py-3 text-zinc-500 text-xs">{timeAgo(job.created_at)}</td>
-                  </tr>
-                  {expanded === job.id && (
-                    <tr key={`${job.id}-detail`} className="bg-zinc-800/20">
-                      <td colSpan={6} className="px-6 py-4">
-                        <div className="grid grid-cols-2 gap-4 text-xs">
-                          <div>
-                            <p className="text-zinc-400 mb-1">JD 摘要</p>
-                            <p className="text-zinc-300 line-clamp-4">{job.jd || '无'}</p>
-                          </div>
-                          <div>
-                            <p className="text-zinc-400 mb-1">招呼语</p>
-                            <p className="text-zinc-300">{job.greeting || '未生成'}</p>
-                            {job.score_reason && (
-                              <>
-                                <p className="text-zinc-400 mt-2 mb-1">评分理由</p>
-                                <p className="text-zinc-300">{job.score_reason}</p>
-                              </>
-                            )}
-                          </div>
+              {displayed.map(job => {
+                const isExpanded = expanded === job.id
+                return (
+                  <Fragment key={job.id}>
+                    <tr
+                      className="cursor-pointer border-b border-card-border bg-white transition-colors hover:bg-[#FFFCFA]"
+                      onClick={() => setExpanded(isExpanded ? null : job.id)}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="max-w-[160px] truncate font-black text-foreground">{job.company}</span>
+                          {job.company_size && (
+                            <span className="rounded-full bg-[#FFFCFA] px-2 py-0.5 text-[10px] font-bold text-muted">{job.company_size}</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="max-w-[220px] truncate px-4 py-3 font-bold text-foreground">{job.title}</td>
+                      <td className="px-4 py-3 text-muted">{job.salary || '-'}</td>
+                      <td className="px-4 py-3">
+                        <span className={`font-mono font-black ${getScoreColor(job.score)}`}>{job.score || '-'}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge variant={statusVariant(job.status) as any}>{getStatusLabel(job.status)}</Badge>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted">
+                        <div className="flex items-center gap-2">
+                          {timeAgo(job.created_at)}
+                          {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                         </div>
                       </td>
                     </tr>
-                  )}
-                </>
-              ))}
+                    {isExpanded && (
+                      <tr className="border-b border-card-border bg-[#FFFCFA]">
+                        <td colSpan={6} className="px-6 py-4">
+                          <div className="grid grid-cols-1 gap-4 text-sm lg:grid-cols-3">
+                            <div className="rounded-2xl border border-card-border bg-white p-4">
+                              <p className="mb-2 text-xs font-black text-primary">JD摘要</p>
+                              <p className="line-clamp-6 leading-6 text-muted">{job.jd || '无'}</p>
+                            </div>
+                            <div className="rounded-2xl border border-card-border bg-white p-4">
+                              <p className="mb-2 text-xs font-black text-primary">招呼语</p>
+                              <p className="line-clamp-6 whitespace-pre-wrap leading-6 text-muted">{job.greeting || '未生成'}</p>
+                            </div>
+                            <div className="rounded-2xl border border-card-border bg-white p-4">
+                              <p className="mb-2 text-xs font-black text-primary">评分理由</p>
+                              <p className="line-clamp-6 whitespace-pre-wrap leading-6 text-muted">{job.score_reason || '无'}</p>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })}
             </tbody>
           </table>
         </div>
 
-        {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-800">
+          <div className="flex items-center justify-between border-t border-card-border px-4 py-3">
             <button
               onClick={() => setPage(p => Math.max(0, p - 1))}
               disabled={page === 0}
-              className="text-xs text-zinc-400 hover:text-white disabled:opacity-30"
+              className="text-xs font-bold text-muted transition hover:text-foreground disabled:opacity-30"
             >
               上一页
             </button>
-            <span className="text-xs text-zinc-500">{page + 1} / {totalPages}</span>
+            <span className="text-xs text-muted">{page + 1} / {totalPages}</span>
             <button
               onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
               disabled={page >= totalPages - 1}
-              className="text-xs text-zinc-400 hover:text-white disabled:opacity-30"
+              className="text-xs font-bold text-muted transition hover:text-foreground disabled:opacity-30"
             >
               下一页
             </button>

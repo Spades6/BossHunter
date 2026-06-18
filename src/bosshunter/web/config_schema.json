@@ -10,7 +10,7 @@
         {"key": "salary_min", "label": "最低薪资 (K)", "type": "number", "min": 0, "max": 200, "default": 0},
         {"key": "salary_max", "label": "最高薪资 (K)", "type": "number", "min": 0, "max": 200, "default": 0},
         {"key": "deal_breakers", "label": "排除关键词", "type": "tags", "description": "含这些词的岗位自动跳过"},
-        {"key": "allow_internship", "label": "接受实习/管培岗位", "type": "switch", "default": false}
+        {"key": "allow_internship", "label": "接受实习/管培岗位", "type": "switch", "default": false, "description": "关闭时自动过滤实习、intern、管培岗位"}
       ]
     },
     {
@@ -52,7 +52,7 @@
       "label": "AI 设置",
       "icon": "Brain",
       "fields": [
-        {"key": "provider", "label": "提供商", "type": "readonly", "default": "anthropic", "description": "当前版本固定使用 Anthropic / Claude Messages 兼容接口；兼容 API 通过 Base URL 与模型名称配置"},
+        {"key": "provider", "label": "提供商", "type": "select", "options": ["anthropic"], "default": "anthropic", "description": "当前后端仅支持 Anthropic"},
         {"key": "model", "label": "模型名称", "type": "text", "default": "claude-sonnet-4-6"},
         {"key": "api_key", "label": "API Key", "type": "password", "description": "也可通过环境变量设置"},
         {"key": "base_url", "label": "Base URL", "type": "text", "placeholder": "留空使用默认", "default": ""}
@@ -65,7 +65,8 @@
       "fields": [
         {"key": "interval", "label": "检查间隔 (分钟)", "type": "number", "min": 1, "max": 120, "default": 30},
         {"key": "chat_url", "label": "聊天页 URL", "type": "text", "default": "https://www.zhipin.com/web/geek/chat"},
-        {"key": "max_resume_sends_per_cycle", "label": "每轮最多发简历数", "type": "number", "min": 1, "max": 20, "default": 5}
+        {"key": "max_resume_sends_per_cycle", "label": "每轮最多发简历数", "type": "number", "min": 1, "max": 20, "default": 5},
+        {"key": "auto_reply_hr_questions", "label": "检测到 HR 问题时自动回复", "type": "switch", "default": false, "description": "关闭时只生成回复建议，需要在监测执行中确认后发送"}
       ]
     },
     {

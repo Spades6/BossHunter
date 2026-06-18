@@ -13,8 +13,8 @@ from bosshunter.browser.runtime import check_node_available, ensure_runtime, get
 def run_browser_diagnostics(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Collect Browser Runtime readiness state."""
     node = check_node_available()
-    runtime_url = get_runtime_url(config)
     runtime_ready = ensure_runtime(config)
+    runtime_url = get_runtime_url(config)
     health = runtime_health(config)
     targets = runtime_targets(config) if runtime_ready else None
     boss_tab = find_boss_tab() if runtime_ready else None
