@@ -1,47 +1,84 @@
 import { NavLink } from 'react-router-dom'
-import { BarChart3, Settings } from 'lucide-react'
+import { BriefcaseBusiness, LayoutDashboard, Radar, Settings } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 const navItems = [
-  { to: '/', icon: BarChart3, label: '看板' },
+  { to: '/', icon: LayoutDashboard, label: '工作台' },
+  { to: '/jobs', icon: BriefcaseBusiness, label: '岗位池' },
+  { to: '/monitor', icon: Radar, label: '监测执行' },
   { to: '/config', icon: Settings, label: '配置' },
 ]
 
-export function Sidebar() {
+interface SidebarProps {
+  pendingReplies?: number
+}
+
+export function Sidebar({ pendingReplies: pendingRepliesProp }: SidebarProps) {
+  const [pendingReplies, setPendingReplies] = useState(pendingRepliesProp ?? 0)
+
+  useEffect(() => {
+    if (pendingRepliesProp !== undefined) {
+      setPendingReplies(pendingRepliesProp)
+      return
+    }
+
+    const fetchPendingReplies = async () => {
+      try {
+        const res = await fetch('/api/history?limit=50')
+        const history = await res.json()
+        if (Array.isArray(history)) {
+          setPendingReplies(history.filter(item => item.action === 'reply_pending').length)
+        }
+      } catch {
+        setPendingReplies(0)
+      }
+    }
+
+    fetchPendingReplies()
+    const interval = setInterval(fetchPendingReplies, 30000)
+    return () => clearInterval(interval)
+  }, [pendingRepliesProp])
+
   return (
-    <aside className="w-60 border-r border-zinc-800 bg-zinc-950 flex flex-col">
-      {/* Logo */}
-      <div className="h-14 flex items-center px-6 border-b border-zinc-800">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
-            <span className="text-primary font-bold text-sm">BH</span>
+    <aside className="w-60 border-r border-card-border bg-white flex flex-col">
+      <div className="h-16 flex items-center px-5 border-b border-card-border">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-primary text-white flex items-center justify-center shadow-lg shadow-primary/20">
+            <span className="font-black text-sm">BH</span>
           </div>
-          <span className="font-semibold text-sm">BossHunter</span>
+          <div>
+            <div className="font-black text-sm tracking-tight text-foreground">BossHunter</div>
+            <div className="text-[11px] text-muted">AI 求职猎手</div>
+          </div>
         </div>
       </div>
 
-      {/* Navigation */}
       <nav className="flex-1 px-3 py-4 space-y-1">
         {navItems.map(item => (
           <NavLink
             key={item.to}
             to={item.to}
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+              `flex items-center justify-between gap-3 px-3 py-3 rounded-xl text-sm transition-colors ${
                 isActive
-                  ? 'bg-zinc-800 text-white'
-                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
+                  ? 'bg-[#FFF0E5] text-primary font-black'
+                  : 'text-muted hover:text-foreground hover:bg-[#FFFCFA]'
               }`
             }
           >
-            <item.icon className="w-4 h-4" />
-            {item.label}
+            <span className="flex items-center gap-3">
+              <item.icon className="w-4 h-4" />
+              {item.label}
+            </span>
+            {item.to === '/monitor' && pendingReplies > 0 && (
+              <span className="h-2 w-2 rounded-full bg-danger" aria-label="有待回复" />
+            )}
           </NavLink>
         ))}
       </nav>
 
-      {/* Footer */}
-      <div className="px-6 py-4 border-t border-zinc-800">
-        <p className="text-xs text-zinc-500">v0.3 · 本地服务</p>
+      <div className="px-5 py-4 border-t border-card-border">
+        <p className="text-xs text-muted">v2.0 · 本地控制台</p>
       </div>
     </aside>
   )

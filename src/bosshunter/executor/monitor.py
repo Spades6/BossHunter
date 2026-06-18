@@ -53,18 +53,84 @@ JS_EXTRACT_CHAT_LIST = """
 })()
 """
 
-# JS: Extract full conversation messages from an open chat
-JS_EXTRACT_CONVERSATION = """
+# JS: Extract full conversation messages from an open chat, including rich/system cards
+JS_EXTRACT_CONVERSATION = r"""
 (() => {
-    const msgs = document.querySelectorAll('.chat-message, .message-item');
+    const MESSAGE_SELECTORS = '.chat-message, .message-item';
+    const TEXT_SELECTORS = '.msg-text, .text, .message-text';
+    const CARD_SELECTORS = [
+        '.card',
+        '.card-wrap',
+        '.message-card',
+        '.system-card',
+        '.resume-card',
+        '[class*="card"]',
+        '[class*="Card"]',
+        '[class*="resume"]',
+        '[class*="Resume"]',
+        '[class*="attachment"]',
+        '[class*="Attachment"]'
+    ].join(',');
+    const ACTION_SELECTORS = 'button, a, [role=button], .btn, [class*="btn"], [class*="button"], [class*="Button"]';
+
+    function normalizeText(value) {
+        return (value || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function isVisible(el) {
+        if (!el) return false;
+        const rects = el.getClientRects();
+        const style = window.getComputedStyle(el);
+        return rects.length > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    }
+
+    function visibleText(el) {
+        if (!isVisible(el)) return '';
+        return normalizeText(el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '');
+    }
+
+    function pushUnique(parts, value) {
+        const text = normalizeText(value);
+        if (text && !parts.includes(text)) parts.push(text);
+    }
+
+    function collectVisibleText(root) {
+        const parts = [];
+        const textEl = root.querySelector(TEXT_SELECTORS);
+        if (textEl) pushUnique(parts, visibleText(textEl));
+
+        const cards = root.querySelectorAll(CARD_SELECTORS);
+        cards.forEach(card => {
+            pushUnique(parts, visibleText(card));
+            card.querySelectorAll(ACTION_SELECTORS).forEach(action => {
+                pushUnique(parts, visibleText(action));
+                pushUnique(parts, action.getAttribute('aria-label'));
+                pushUnique(parts, action.getAttribute('title'));
+            });
+        });
+
+        if (!parts.length) pushUnique(parts, visibleText(root));
+        return normalizeText(parts.join(' '));
+    }
+
+    function isResumeRequestCard(text) {
+        const hasAttachmentResume = text.includes('附件简历') || text.includes('您的附件简历');
+        const hasIntent = ['是否同意', '同意', '想要一份', '请求', '获取', '发送', '发给'].some(kw => text.includes(kw));
+        return hasAttachmentResume && hasIntent;
+    }
+
+    const msgs = document.querySelectorAll(MESSAGE_SELECTORS);
     const results = [];
     msgs.forEach(msg => {
         const isMe = msg.classList.contains('is-self') || msg.classList.contains('message-self')
             || msg.querySelector('.msg-self') !== null;
-        const textEl = msg.querySelector('.msg-text, .text, .message-text');
-        const text = textEl ? textEl.textContent.trim() : '';
+        const text = collectVisibleText(msg);
         if (text) {
-            results.push({sender: isMe ? 'me' : 'hr', text: text.substring(0, 500)});
+            results.push({
+                sender: isMe ? 'me' : 'hr',
+                text: text.substring(0, 500),
+                kind: isResumeRequestCard(text) ? 'resume_request_card' : 'message'
+            });
         }
     });
     return JSON.stringify(results);
@@ -130,10 +196,28 @@ def _detect_rejection(messages: list[dict]) -> bool:
     return False
 
 
+def _looks_like_resume_request_card(text: str) -> bool:
+    """Detect BOSS rich-card requests for the user's attachment resume.
+
+    This is intentionally stricter than the normal text-message resume detector:
+    card handling should only trigger when strong attachment-resume wording appears
+    with an action or request signal.
+    """
+    text = text or ""
+    attachment_signals = ["附件简历", "您的附件简历", "我的附件简历"]
+    intent_signals = ["是否同意", "同意", "想要一份", "请求", "获取", "发送", "发给"]
+    rejection_context = ["不匹配", "不合适", "不太合适", "不符合", "不太符合", "很遗憾", "无法推进", "祝", "已招满", "岗位已关闭"]
+
+    if any(kw in text for kw in rejection_context):
+        return False
+    return any(kw in text for kw in attachment_signals) and any(kw in text for kw in intent_signals)
+
+
 def _detect_resume_request(messages: list[dict]) -> bool:
     """Check if HR is asking for a resume in messages AFTER user's last reply.
 
     Excludes messages that are actually rejections containing the word '简历'.
+    Also detects BOSS rich cards requesting the user's attachment resume.
     """
     resume_keywords = ["简历", "简历发", "发一份简历", "看看简历", "发个简历", "发下简历",
                        "附件", "发一下简历", "方便发", "看看你的简历"]
@@ -148,9 +232,21 @@ def _detect_resume_request(messages: list[dict]) -> bool:
         has_rejection = any(kw in text for kw in rejection_context)
         if has_rejection:
             continue
+        if msg.get("kind") == "resume_request_card" or _looks_like_resume_request_card(text):
+            return True
         for kw in resume_keywords:
             if kw in text:
                 return True
+    return False
+
+
+def _has_resume_request_card(messages: list[dict]) -> bool:
+    """Check for BOSS resume request cards in HR messages after the user's last reply."""
+    hr_msgs_after = _get_hr_messages_after_last_reply(messages)
+    for msg in hr_msgs_after:
+        text = msg.get("text", "")
+        if msg.get("kind") == "resume_request_card" or _looks_like_resume_request_card(text):
+            return True
     return False
 
 
@@ -168,6 +264,31 @@ def _get_hr_messages_after_last_reply(messages: list[dict]) -> list[dict]:
     # Get HR messages after that point
     after = messages[last_my_idx + 1:] if last_my_idx >= 0 else messages
     return [m for m in after if m["sender"] == "hr"]
+
+
+def _truncate_text(text: str, limit: int) -> str:
+    """Limit text length for history payloads."""
+    text = text or ""
+    return text if len(text) <= limit else text[:limit]
+
+
+def _build_reply_detail(messages: list[dict], ai_reply: str, schema: str = "reply_pending.v1") -> str:
+    """Build structured history detail containing the HR question and AI reply."""
+    hr_messages = _get_hr_messages_after_last_reply(messages)
+    hr_question = "\n".join(str(msg.get("text", "")) for msg in hr_messages[-3:]).strip()
+    payload = {
+        "schema": schema,
+        "hr_question": _truncate_text(hr_question, 1000),
+        "ai_reply": _truncate_text(ai_reply or "", 1000),
+        "conversation_tail": [
+            {
+                "sender": str(msg.get("sender", "")),
+                "text": _truncate_text(str(msg.get("text", "")), 500),
+            }
+            for msg in messages[-6:]
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _check_if_i_already_replied(messages: list[dict]) -> bool:
@@ -593,7 +714,7 @@ def _match_conversation_to_job(conv: dict, jobs: list[dict]) -> dict | None:
 def _handle_conversation(job: dict, config: dict) -> str:
     """Handle a single conversation that has an HR reply.
 
-    Returns action taken: 'skipped_user_replied', 'rejected', 'needs_resume', 'auto_replied', 'failed'
+    Returns action taken: 'skipped_user_replied', 'skipped_existing_resume', 'rejected', 'needs_resume', 'auto_replied', 'failed'
     """
     console.print(f"\n  [bold]处理: {job['company']} - {job['title']}[/bold]")
 
@@ -635,8 +756,17 @@ def _handle_conversation(job: dict, config: dict) -> str:
         return "rejected"
 
     # Check if HR is asking for resume
+    resume_request_from_card = _has_resume_request_card(messages)
     if _detect_resume_request(messages):
         console.print("[cyan]    HR要求简历，生成定制化简历...[/cyan]")
+
+        db = get_db()
+        already_generated_resume = _has_generated_resume_for_job(db, job["id"])
+        db.close()
+        if already_generated_resume:
+            console.print("[dim]    定制简历已生成过，跳过重复生成和重复记录[/dim]")
+            close_tab(target_id)
+            return "skipped_existing_resume"
 
         # Generate tailored resume, then hand off to user for manual sending
         from bosshunter.ai.resume import generate_tailored_resume
@@ -647,22 +777,37 @@ def _handle_conversation(job: dict, config: dict) -> str:
         else:
             console.print("[yellow]    ! 定制简历生成失败，请手动处理[/yellow]")
 
-        # Auto-send portfolio link if not already sent
-        portfolio_url = config.get("profile", {}).get("portfolio_url", "")
-        if not _check_if_portfolio_sent(messages, portfolio_url):
-            time.sleep(2)
-            link_msg = f"这是我的在线简历，方便您查看：{portfolio_url}"
-            if _send_message_in_chat(target_id, link_msg):
-                console.print("[green]    ✓ 在线简历链接已发送[/green]")
+        # Auto-send portfolio link for normal text resume requests only.
+        # Card-triggered requests are recognition-only: generate and mark needs_resume.
+        if not resume_request_from_card:
+            portfolio_url = config.get("profile", {}).get("portfolio_url", "")
+            if not _check_if_portfolio_sent(messages, portfolio_url):
+                time.sleep(2)
+                link_msg = f"这是我的在线简历，方便您查看：{portfolio_url}"
+                if _send_message_in_chat(target_id, link_msg):
+                    console.print("[green]    ✓ 在线简历链接已发送[/green]")
+                else:
+                    console.print("[yellow]    ! 在线简历链接发送失败[/yellow]")
             else:
-                console.print("[yellow]    ! 在线简历链接发送失败[/yellow]")
-        else:
-            console.print("[dim]    在线简历链接已发过，跳过[/dim]")
+                console.print("[dim]    在线简历链接已发过，跳过[/dim]")
 
         # Update status to needs_resume so user knows to send the PDF
+        if resume_request_from_card:
+            history_detail = _build_reply_detail(
+                messages,
+                f"附件简历卡片请求已识别，未自动发送在线简历，定制PDF待手动发送: {resume_path}",
+                "needs_resume.v1",
+            )
+        else:
+            history_detail = _build_reply_detail(
+                messages,
+                f"在线简历已发送，定制PDF待手动发送: {resume_path}",
+                "needs_resume.v1",
+            )
+
         db = get_db()
         update_job_status(db, job["id"], "needs_resume")
-        add_history(db, job["id"], "needs_resume", f"在线简历已发送，定制PDF待手动发送: {resume_path}")
+        add_history(db, job["id"], "needs_resume", history_detail)
         db.close()
 
         close_tab(target_id)
@@ -678,11 +823,19 @@ def _handle_conversation(job: dict, config: dict) -> str:
 
     console.print(f"[dim]    回复内容: {reply[:80]}...[/dim]")
 
+    if not config.get("monitor", {}).get("auto_reply_hr_questions", False):
+        console.print("[yellow]    已生成回复建议，等待监测执行中确认[/yellow]")
+        db = get_db()
+        add_history(db, job["id"], "reply_pending", _build_reply_detail(messages, reply))
+        db.close()
+        close_tab(target_id)
+        return "reply_pending"
+
     # Send the reply
     if _send_message_in_chat(target_id, reply):
         console.print("[green]    ✓ 自动回复已发送[/green]")
         db = get_db()
-        add_history(db, job["id"], "auto_replied", reply[:100])
+        add_history(db, job["id"], "auto_replied", _build_reply_detail(messages, reply))
         db.close()
         close_tab(target_id)
         return "auto_replied"
@@ -690,6 +843,37 @@ def _handle_conversation(job: dict, config: dict) -> str:
         console.print("[yellow]    ! 发送失败[/yellow]")
         close_tab(target_id)
         return "failed"
+
+
+def _row_text(row, key: str) -> str:
+    """Read a text value from sqlite Row/dict-like objects defensively."""
+    if row is None:
+        return ""
+    try:
+        value = row[key]
+    except (KeyError, IndexError, TypeError):
+        return ""
+    return value if isinstance(value, str) else ""
+
+
+def _has_generated_resume_for_job(db, job_id: str) -> bool:
+    """Return true when this job already has a generated resume/request result."""
+    row = db.execute(
+        "SELECT status, resume_path FROM jobs WHERE id = ?",
+        (job_id,),
+    ).fetchone()
+    status = _row_text(row, "status")
+    resume_path = _row_text(row, "resume_path").strip()
+    return status == "resume_sent" or bool(resume_path)
+
+
+def _has_follow_up_history(db, job_id: str) -> bool:
+    """Return true when a follow-up was already recorded for this job."""
+    row = db.execute(
+        "SELECT 1 FROM history WHERE job_id = ? AND action = 'follow_up_sent' LIMIT 1",
+        (job_id,),
+    ).fetchone()
+    return row is not None
 
 
 def _check_follow_ups(config: dict, throttle, replied_job_ids: set | None = None) -> int:
@@ -745,6 +929,10 @@ def _check_follow_ups(config: dict, throttle, replied_job_ids: set | None = None
 
     count = 0
     for job in stale_jobs:
+        if _has_follow_up_history(db, job["id"]):
+            console.print(f"[dim]  跟进跳过（已记录过跟进）: {job['company']}[/dim]")
+            continue
+
         follow_up_msg = _generate_follow_up(job, config)
         if not follow_up_msg:
             continue
@@ -831,7 +1019,7 @@ def monitor_and_send_resumes(config: dict) -> dict:
             replied_job_ids.add(job["id"])
             action = _handle_conversation(job, config)
 
-            if action == "skipped_user_replied":
+            if action in ("skipped_user_replied", "skipped_existing_resume"):
                 summary["skipped"] += 1
             elif action == "auto_replied":
                 summary["replied"] += 1

@@ -82,8 +82,7 @@ class SendWindowChecker:
         """Check if current local time is within any send window."""
         if not self._windows:
             return True  # No windows configured = always active
-        now = datetime.now()
-        cur_minutes = now.hour * 60 + now.minute
+        cur_minutes = self._current_minutes()
         for start_h, start_m, end_h, end_m in self._windows:
             start_minutes = start_h * 60 + start_m
             end_minutes = end_h * 60 + end_m
@@ -91,12 +90,22 @@ class SendWindowChecker:
                 return True
         return False
 
+    def has_valid_windows(self) -> bool:
+        """Return whether at least one configured window parsed successfully."""
+        return bool(self._windows)
+
+    def latest_end_time_reached(self) -> bool:
+        """Return whether local time is past the latest configured window end."""
+        if not self._windows:
+            return False
+        latest_end = max(end_h * 60 + end_m for _, _, end_h, end_m in self._windows)
+        return self._current_minutes() >= latest_end
+
     def next_window_info(self) -> str:
         """Describe when next window opens."""
         if not self._windows:
             return "无窗口限制"
-        now = datetime.now()
-        cur_minutes = now.hour * 60 + now.minute
+        cur_minutes = self._current_minutes()
         # Find next window start
         for start_h, start_m, end_h, end_m in sorted(self._windows):
             start_minutes = start_h * 60 + start_m
@@ -107,6 +116,11 @@ class SendWindowChecker:
             first = self._windows[0]
             return f"今日窗口已过，明日 {first[0]:02d}:{first[1]:02d} 开始"
         return ""
+
+    @staticmethod
+    def _current_minutes() -> int:
+        now = datetime.now()
+        return now.hour * 60 + now.minute
 
     @staticmethod
     def _parse_time(s: str) -> tuple[int, int]:

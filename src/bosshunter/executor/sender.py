@@ -11,6 +11,18 @@ from bosshunter.throttle import RequestThrottle, SendWindowChecker, ProgressiveB
 
 console = Console()
 
+
+def _parse_js_result(result) -> dict:
+    if not result:
+        return {"success": False, "error": "no_response"}
+    if isinstance(result, dict):
+        return result
+    try:
+        return json.loads(result)
+    except (json.JSONDecodeError, TypeError):
+        return {"success": False, "error": "parse_error"}
+
+
 # JS: 在岗位详情页点击"立即沟通"并发送招呼语
 JS_SEND_GREETING = """
 (async (greeting) => {
@@ -49,6 +61,78 @@ JS_SEND_GREETING = """
 """
 
 
+def _send_greeting_once(job: dict, greeting: str, throttle_config: dict) -> tuple[dict, str | None]:
+    target_id = new_tab(job["url"])
+    if not target_id:
+        return {"success": False, "error": "open_page_failed", "history_detail": "无法打开页面", "skip_backoff": True}, None
+
+    browse_min = throttle_config.get("browse_duration_min", 15)
+    browse_max = throttle_config.get("browse_duration_max", 30)
+    if throttle_config.get("browse_before_greet", True):
+        import random
+        browse_time = random.uniform(browse_min, browse_max)
+        time.sleep(browse_time)
+
+    click_chat_js = """
+    (() => {
+        const btn = document.querySelector('[ka*="chat"], .btn-startchat, .op-btn-chat');
+        if (!btn) return JSON.stringify({success: false, error: 'no_chat_button'});
+        btn.click();
+        return JSON.stringify({success: true});
+    })()
+    """
+    result1a = _parse_js_result(evaluate(target_id, click_chat_js))
+    if not result1a.get("success"):
+        close_tab(target_id)
+        return {"success": False, "error": "no_chat_button", "history_detail": "无法找到沟通按钮", "skip_backoff": True}, None
+
+    time.sleep(4)
+
+    click_confirm_js = """
+    (() => {
+        const popup = document.querySelector('.greet-boss-pop, .greet-pop, .dialog-wrap');
+        if (popup) {
+            const confirmBtn = popup.querySelector('[ka="dialog_confirm"], .btn-sure');
+            if (confirmBtn) { confirmBtn.click(); return JSON.stringify({success: true, action: 'confirmed'}); }
+        }
+        return JSON.stringify({success: true, action: 'no_popup'});
+    })()
+    """
+    evaluate(target_id, click_confirm_js)
+
+    for _ in range(20):
+        time.sleep(0.5)
+        url_now = evaluate(target_id, "location.pathname")
+        if url_now and "/web/geek/chat" in url_now:
+            break
+
+    greeting_escaped = json.dumps(greeting)
+    send_msg_js = f"""
+    (() => {{
+        const input = document.querySelector('#chat-input');
+        if (!input) return JSON.stringify({{success: false, error: 'no_chat_input'}});
+
+        let vue = null;
+        let el = input;
+        for (let i = 0; i < 15 && el; i++) {{
+            if (el.__vue__) {{ vue = el.__vue__; break; }}
+            el = el.parentElement;
+        }}
+        if (!vue) return JSON.stringify({{success: false, error: 'no_vue'}});
+
+        input.innerText = {greeting_escaped};
+        vue._data.enableSubmit = true;
+        vue.handleSubmit();
+        return JSON.stringify({{success: true}});
+    }})()
+    """
+    result_data = _parse_js_result(evaluate(target_id, send_msg_js))
+    if result_data.get("success"):
+        close_tab(target_id)
+        return result_data, None
+    return result_data, target_id
+
+
 def send_greetings(config: dict, force: bool = False) -> int:
     """Send generated greetings. Returns count of successfully sent."""
     db = get_db()
@@ -74,6 +158,9 @@ def send_greetings(config: dict, force: bool = False) -> int:
         return 0
 
     jobs = get_jobs_ready_to_send(db)
+    _workbench_job_ids = {str(job_id) for job_id in config.get("_workbench_job_ids", [])}
+    if _workbench_job_ids:
+        jobs = [job for job in jobs if str(job["id"]) in _workbench_job_ids]
 
     if not jobs:
         console.print("[yellow]没有已生成招呼语的待发送岗位，请先运行 bosshunter greet[/yellow]")
@@ -127,92 +214,17 @@ def send_greetings(config: dict, force: bool = False) -> int:
 
             progress.update(task, description=f"发送: {job['company'][:10]} - {job['title'][:15]}")
 
-            # Open job detail page
-            target_id = new_tab(job["url"])
-            if not target_id:
-                update_job_status(db, job["id"], "error")
-                add_history(db, job["id"], "error", "无法打开页面")
-                progress.update(task, advance=1)
-                continue
+            result_data, failed_target_id = _send_greeting_once(job, greeting, throttle_config)
+            if result_data.get("error") == "no_chat_input" and failed_target_id:
+                console.print("[yellow]    ! 未进入具体聊天会话，重新打开岗位页再试一次[/yellow]")
+                close_tab(failed_target_id)
+                result_data, failed_target_id = _send_greeting_once(job, greeting, throttle_config)
 
-            # Browse page first (simulate human reading)
-            browse_min = throttle_config.get("browse_duration_min", 15)
-            browse_max = throttle_config.get("browse_duration_max", 30)
-            if throttle_config.get("browse_before_greet", True):
-                import random
-                browse_time = random.uniform(browse_min, browse_max)
-                time.sleep(browse_time)
-
-            # Step 1a: Click "立即沟通" to initiate chat
-            click_chat_js = """
-            (() => {
-                const btn = document.querySelector('[ka*="chat"], .btn-startchat, .op-btn-chat');
-                if (!btn) return JSON.stringify({success: false, error: 'no_chat_button'});
-                btn.click();
-                return JSON.stringify({success: true});
-            })()
-            """
-            result1a = evaluate(target_id, click_chat_js)
-            if not result1a:
-                update_job_status(db, job["id"], "error")
-                add_history(db, job["id"], "error", "无法找到沟通按钮")
-                close_tab(target_id)
-                progress.update(task, advance=1)
-                continue
-
-            # Wait for popup to appear
-            time.sleep(4)
-
-            # Step 1b: Click "继续沟通" in popup to enter chat page
-            click_confirm_js = """
-            (() => {
-                const popup = document.querySelector('.greet-boss-pop, .greet-pop, .dialog-wrap');
-                if (popup) {
-                    const confirmBtn = popup.querySelector('[ka="dialog_confirm"], .btn-sure');
-                    if (confirmBtn) { confirmBtn.click(); return JSON.stringify({success: true, action: 'confirmed'}); }
-                }
-                // Maybe already on chat page (no popup for existing contacts)
-                return JSON.stringify({success: true, action: 'no_popup'});
-            })()
-            """
-            evaluate(target_id, click_confirm_js)
-
-            # Wait for navigation to chat page (/web/geek/chat)
-            for _ in range(20):
-                time.sleep(0.5)
-                url_now = evaluate(target_id, "location.pathname")
-                if url_now and "/web/geek/chat" in url_now:
-                    break
-
-            # Step 2: On chat page, type and send personalized greeting
-            greeting_escaped = json.dumps(greeting)
-            send_msg_js = f"""
-            (() => {{
-                const input = document.querySelector('.chat-input');
-                if (!input) return JSON.stringify({{success: false, error: 'no_chat_input'}});
-
-                // Set text and trigger Vue reactivity (execCommand fails in CDP)
-                input.focus();
-                input.innerText = {greeting_escaped};
-                input.dispatchEvent(new Event('input', {{bubbles: true}}));
-
-                // Click send button
-                const sendBtn = document.querySelector('.btn-send');
-                if (!sendBtn) return JSON.stringify({{success: false, error: 'no_send_button'}});
-                sendBtn.click();
-                return JSON.stringify({{success: true}});
-            }})()
-            """
-            result = evaluate(target_id, send_msg_js)
-            close_tab(target_id)
-            throttle.mark()
-
-            try:
-                result_data = json.loads(result) if result else {"success": False, "error": "no_response"}
-            except (json.JSONDecodeError, TypeError):
-                result_data = {"success": False, "error": "parse_error"}
+            if not result_data.get("success"):
+                console.print(f"[yellow]    ! 发送失败，保留页面便于排查: {result_data.get('error', 'unknown')}[/yellow]")
 
             if result_data.get("success"):
+                throttle.mark()
                 update_job_status(db, job["id"], "sent")
                 add_history(db, job["id"], "sent", greeting[:50])
                 sent_count += 1
@@ -220,7 +232,12 @@ def send_greetings(config: dict, force: bool = False) -> int:
             else:
                 error = result_data.get("error", "unknown")
                 update_job_status(db, job["id"], "error")
-                add_history(db, job["id"], "error", f"发送失败: {error}")
+                add_history(db, job["id"], "error", result_data.get("history_detail", f"发送失败: {error}"))
+                if result_data.get("skip_backoff"):
+                    progress.update(task, advance=1)
+                    continue
+
+                throttle.mark()
 
                 # Progressive backoff on errors
                 pause_duration = backoff.record_error()

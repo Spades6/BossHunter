@@ -2,8 +2,10 @@ import { useLocation } from 'react-router-dom'
 import { Activity } from 'lucide-react'
 
 const pageTitles: Record<string, string> = {
-  '/': 'Dashboard',
-  '/config': '配置管理',
+  '/': '工作台',
+  '/jobs': '岗位池',
+  '/monitor': '监测执行',
+  '/config': '配置',
 }
 
 export function Header() {
@@ -11,11 +13,11 @@ export function Header() {
   const title = pageTitles[location.pathname] || 'BossHunter'
 
   return (
-    <header className="h-14 border-b border-zinc-800 flex items-center justify-between px-6">
-      <h1 className="text-lg font-semibold">{title}</h1>
-      <div className="flex items-center gap-2 text-xs text-zinc-400">
+    <header className="h-16 border-b border-card-border bg-[#FFFCFA] flex items-center justify-between px-6">
+      <h1 className="text-lg font-black text-foreground">{title}</h1>
+      <div className="flex items-center gap-2 text-xs text-muted">
         <Activity className="w-3 h-3 text-success" />
-        <span>服务运行中</span>
+        <span>本地服务运行中</span>
       </div>
     </header>
   )

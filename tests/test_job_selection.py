@@ -6,6 +6,7 @@ from bosshunter.db import (
     get_db,
     get_jobs_pending_confirmation,
     get_jobs_ready_to_send,
+    get_jobs_with_send_errors,
     insert_job,
     update_job_greeting,
     update_job_score,
@@ -74,7 +75,28 @@ class JobSelectionTests(unittest.TestCase):
             finally:
                 db.close()
 
-        self.assertEqual([job["id"] for job in jobs], ["sendable"])
+        self.assertCountEqual([job["id"] for job in jobs], ["approved", "sendable"])
+
+    def test_send_errors_return_only_jobs_with_generated_greetings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = get_db(Path(tmp) / "bosshunter.db")
+            try:
+                insert_job(db, _job("send-failed"))
+                update_job_status(db, "send-failed", "error")
+                update_job_greeting(db, "send-failed", "Hi, this role looks like a strong fit.")
+
+                insert_job(db, _job("generation-failed"))
+                update_job_status(db, "generation-failed", "error")
+
+                insert_job(db, _job("sendable"))
+                update_job_status(db, "sendable", "ready")
+                update_job_greeting(db, "sendable", "Ready to send.")
+
+                jobs = get_jobs_with_send_errors(db)
+            finally:
+                db.close()
+
+        self.assertEqual([job["id"] for job in jobs], ["send-failed"])
 
 
 if __name__ == "__main__":

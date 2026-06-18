@@ -110,6 +110,38 @@ class BrowserRuntimeManagerTests(unittest.TestCase):
         self.assertTrue(result)
         start_runtime.assert_called_once()
 
+    @patch("bosshunter.browser.runtime.time.sleep")
+    @patch("bosshunter.browser.runtime._is_port_available")
+    @patch("bosshunter.browser.runtime.runtime_health")
+    @patch("bosshunter.browser.runtime.runtime_targets")
+    @patch("bosshunter.browser.runtime.start_runtime")
+    @patch("bosshunter.browser.runtime.check_node_available")
+    def test_ensure_runtime_uses_next_free_port_when_default_has_non_bosshunter_service(
+        self,
+        check_node,
+        start_runtime,
+        runtime_targets,
+        runtime_health,
+        is_port_available,
+        sleep,
+    ):
+        from bosshunter.browser.runtime import ensure_runtime, get_runtime_url
+
+        config = {"browser": {"runtime": "builtin", "auto_start_proxy": True, "proxy_host": "127.0.0.1", "proxy_port": 3456}}
+        check_node.return_value = {"available": True, "version": "v22.1.0"}
+        runtime_health.side_effect = lambda browser: (
+            {"status": "ok", "runtime": "web-access"} if browser["proxy_port"] == 3456 else None
+        )
+        is_port_available.side_effect = lambda host, port: port == 3457
+        runtime_targets.side_effect = lambda browser: [{"targetId": "abc"}] if browser["proxy_port"] == 3457 else None
+
+        result = ensure_runtime(config, wait_seconds=0.01)
+
+        self.assertTrue(result)
+        self.assertEqual(config["browser"]["proxy_port"], 3457)
+        self.assertEqual(start_runtime.call_args.args[0]["proxy_port"], 3457)
+        self.assertEqual(get_runtime_url(), "http://127.0.0.1:3457")
+
     @patch("bosshunter.browser.runtime.subprocess.Popen")
     def test_start_runtime_sets_bosshunter_environment(self, popen):
         from bosshunter.browser.runtime import start_runtime

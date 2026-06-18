@@ -41,6 +41,7 @@ DEFAULTS: dict[str, Any] = {
         "target_cities": ["北京"],
         "salary_min": 0,
         "salary_max": 0,
+        "allow_internship": False,
         "deal_breakers": [],
         "allow_internship": False,
     },
@@ -73,6 +74,7 @@ DEFAULTS: dict[str, Any] = {
         "interval": 30,  # 分钟
         "chat_url": "https://www.zhipin.com/web/geek/chat",
         "max_resume_sends_per_cycle": 5,
+        "auto_reply_hr_questions": False,
     },
     "follow_up": {
         "enabled": True,

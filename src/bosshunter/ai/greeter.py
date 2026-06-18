@@ -146,14 +146,19 @@ def generate_greetings(config: dict) -> int:
     """Generate greetings for approved jobs with optional self-review. Returns count generated."""
     db = get_db()
     jobs = get_jobs_by_status(db, "approved")
+    _workbench_job_ids = {str(job_id) for job_id in config.get("_workbench_job_ids", [])}
+    if _workbench_job_ids:
+        jobs = [job for job in jobs if str(job["id"]) in _workbench_job_ids]
 
     if not jobs:
         console.print("[yellow]没有已确认的岗位可生成招呼语。请先运行 `bosshunter confirm`，或使用 `bosshunter run` 执行完整流程。[/yellow]")
+        db.close()
         return 0
 
     resume_summary = _get_resume_summary(config)
     if not resume_summary:
         console.print("[red]无法读取简历[/red]")
+        db.close()
         return 0
 
     ai_cfg = config.get("ai", {})

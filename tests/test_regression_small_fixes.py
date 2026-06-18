@@ -57,10 +57,10 @@ class VersionMetadataTests(unittest.TestCase):
             / "Sidebar.tsx"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('version = "0.3.0"', pyproject)
-        self.assertEqual(bosshunter.__version__, "0.3.0")
-        self.assertEqual(json.loads(health())["version"], "0.3.0")
-        self.assertIn("v0.3 · 本地服务", sidebar_source)
+        self.assertIn('version = "2.0.0"', pyproject)
+        self.assertEqual(bosshunter.__version__, "2.0.0")
+        self.assertEqual(json.loads(health())["version"], "2.0.0")
+        self.assertIn("v2.0 · 本地控制台", sidebar_source)
         self.assertNotIn("v1.1.0", sidebar_source)
 
 
@@ -227,10 +227,10 @@ class DashboardPageTests(unittest.TestCase):
             / "DashboardPage.tsx"
         ).read_text(encoding="utf-8")
 
-    def test_dashboard_renders_recent_activity_history(self):
-        self.assertIn("RecentActivity", self.source)
+    def test_dashboard_renders_monitor_execution_history(self):
+        self.assertIn("MonitorExecutionView", self.source)
         self.assertIn("history", self.source)
-        self.assertIn("<RecentActivity data={history}", self.source)
+        self.assertIn("<MonitorExecutionView history={history}", self.source)
 
     def test_dashboard_exposes_manual_refresh_button(self):
         self.assertIn("RefreshCw", self.source)

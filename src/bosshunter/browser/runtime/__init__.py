@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -114,6 +115,36 @@ def runtime_targets(config: dict[str, Any] | None = None) -> list[dict[str, Any]
     return None
 
 
+def _is_port_available(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _find_available_runtime_port(browser: dict[str, Any]) -> int | None:
+    host = browser.get("proxy_host", "127.0.0.1")
+    start_port = int(browser.get("proxy_port", 3456))
+    for port in range(start_port + 1, min(start_port + 100, 65535) + 1):
+        if _is_port_available(host, port):
+            return port
+    return None
+
+
+def _switch_runtime_port(config: dict[str, Any] | None, browser: dict[str, Any], port: int) -> None:
+    global _browser_config
+    browser["proxy_port"] = port
+    if isinstance(config, dict):
+        if isinstance(config.get("browser"), dict):
+            config["browser"]["proxy_port"] = port
+        else:
+            config["proxy_port"] = port
+    _browser_config = browser
+
+
 def _runtime_env(config: dict[str, Any] | None = None) -> dict[str, str]:
     browser = get_browser_config(config)
     env = os.environ.copy()
@@ -145,6 +176,7 @@ def ensure_runtime(config: dict[str, Any] | None = None, wait_seconds: float = 1
     """Ensure the local Browser Runtime is ready for page operations."""
     browser = get_browser_config(config)
     if runtime_targets(browser) is not None:
+        set_browser_config(browser)
         return True
     if browser.get("runtime") != "builtin":
         return False
@@ -153,10 +185,18 @@ def ensure_runtime(config: dict[str, Any] | None = None, wait_seconds: float = 1
     if not check_node_available().get("available"):
         return False
 
+    health = runtime_health(browser)
+    if health and health.get("runtime") != "bosshunter":
+        fallback_port = _find_available_runtime_port(browser)
+        if fallback_port is None:
+            return False
+        _switch_runtime_port(config, browser, fallback_port)
+
     start_runtime(browser)
     deadline = time.time() + wait_seconds
     while time.time() < deadline:
         if runtime_targets(browser) is not None:
+            set_browser_config(browser)
             return True
         time.sleep(0.5)
     return False

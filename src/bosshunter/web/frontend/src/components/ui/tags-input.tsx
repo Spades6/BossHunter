@@ -30,19 +30,19 @@ export function TagsInput({ value, onChange, placeholder = '输入后按回车�
 
   return (
     <div className={cn(
-      'flex flex-wrap gap-1.5 min-h-[36px] p-2 rounded-md border border-zinc-700 bg-zinc-800 focus-within:ring-2 focus-within:ring-primary/50 focus-within:border-primary',
+      'flex flex-wrap gap-1.5 min-h-[36px] p-2 rounded-md border border-card-border bg-white focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary',
       className
     )}>
       {value.map((tag, i) => (
         <span
           key={i}
-          className="inline-flex items-center gap-1 rounded-md bg-zinc-700 px-2 py-0.5 text-xs text-zinc-200"
+          className="inline-flex items-center gap-1 rounded-md bg-[#FFF0E5] px-2 py-0.5 text-xs font-bold text-primary"
         >
           {tag}
           <button
             type="button"
             onClick={() => removeTag(i)}
-            className="text-zinc-400 hover:text-white"
+            className="text-primary/70 hover:text-primary"
           >
             <X className="w-3 h-3" />
           </button>
@@ -53,7 +53,7 @@ export function TagsInput({ value, onChange, placeholder = '输入后按回车�
         onChange={e => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={value.length === 0 ? placeholder : ''}
-        className="flex-1 min-w-[80px] bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 outline-none"
+        className="flex-1 min-w-[80px] bg-transparent text-sm text-foreground placeholder:text-muted/60 outline-none"
       />
     </div>
   )

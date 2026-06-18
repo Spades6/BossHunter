@@ -145,10 +145,22 @@ def get_jobs_ready_to_send(conn: sqlite3.Connection) -> list[dict]:
     """Get jobs that have generated greetings and are ready to send."""
     rows = conn.execute("""
         SELECT * FROM jobs
-        WHERE status = 'ready'
+        WHERE status IN ('ready', 'approved')
           AND greeting IS NOT NULL
           AND TRIM(greeting) != ''
         ORDER BY score DESC
+    """).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_jobs_with_send_errors(conn: sqlite3.Connection) -> list[dict]:
+    """Get jobs where greeting sending failed and can be retried."""
+    rows = conn.execute("""
+        SELECT * FROM jobs
+        WHERE status = 'error'
+          AND greeting IS NOT NULL
+          AND TRIM(greeting) != ''
+        ORDER BY updated_at DESC, score DESC
     """).fetchall()
     return [dict(row) for row in rows]
 
@@ -208,9 +220,10 @@ def get_funnel_stats(conn: sqlite3.Connection) -> dict[str, int]:
     replied = conn.execute("SELECT COUNT(*) as cnt FROM jobs WHERE status IN ('replied', 'resume_sent', 'needs_resume')").fetchone()["cnt"]
     resume_sent = conn.execute("SELECT COUNT(*) as cnt FROM jobs WHERE status = 'resume_sent'").fetchone()["cnt"]
     needs_resume = conn.execute("SELECT COUNT(*) as cnt FROM jobs WHERE status = 'needs_resume'").fetchone()["cnt"]
+    resume_generated = conn.execute("SELECT COUNT(*) as cnt FROM jobs WHERE resume_path IS NOT NULL AND TRIM(resume_path) != ''").fetchone()["cnt"]
     follow_up = conn.execute("SELECT COUNT(*) as cnt FROM jobs WHERE status = 'follow_up_sent'").fetchone()["cnt"]
     rejected = conn.execute("SELECT COUNT(*) as cnt FROM jobs WHERE status = 'rejected'").fetchone()["cnt"]
-    return {"采集总数": total, "初筛通过": prefilter_passed, "AI评分": ai_scored, "人工确认": approved, "发送": sent, "回复": replied, "简历已发": resume_sent, "待手动发简历": needs_resume, "跟进": follow_up, "拒绝": rejected}
+    return {"采集总数": total, "初筛通过": prefilter_passed, "AI评分": ai_scored, "人工确认": approved, "发送": sent, "回复": replied, "简历已发": resume_sent, "待手动发简历": needs_resume, "简历生成": resume_generated, "跟进": follow_up, "拒绝": rejected}
 
 
 def get_daily_activity(conn: sqlite3.Connection, days: int = 7) -> list[dict]:
@@ -240,7 +253,7 @@ def get_top_companies(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
 def get_recent_history(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
     """Get recent history entries with job info."""
     rows = conn.execute("""
-        SELECT h.action, h.detail, h.created_at, j.company, j.title
+        SELECT h.id, h.job_id, h.action, h.detail, h.created_at, j.company, j.title
         FROM history h
         JOIN jobs j ON h.job_id = j.id
         ORDER BY h.created_at DESC

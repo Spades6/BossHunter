@@ -15,6 +15,7 @@ from bosshunter.browser import (
 )
 from bosshunter.config import CITY_CODES
 from bosshunter.db import get_db, job_exists, insert_job
+from bosshunter.job_filters import matching_deal_breaker
 from bosshunter.throttle import PageThrottle
 
 console = Console()
@@ -128,15 +129,6 @@ def _generate_job_id(url: str) -> str:
     return hashlib.md5(url.encode()).hexdigest()[:16]
 
 
-def _matches_deal_breakers(title: str, deal_breakers: list[str]) -> bool:
-    """Check if job title contains any deal breaker keywords."""
-    title_lower = title.lower()
-    for keyword in deal_breakers:
-        if keyword.lower() in title_lower:
-            return True
-    return False
-
-
 def scrape_jobs(config: dict, keywords: list[str], limit: int = 200) -> int:
     """Scrape jobs from BOSS直聘 and store in database.
 
@@ -248,7 +240,7 @@ def scrape_jobs(config: dict, keywords: list[str], limit: int = 200) -> int:
                         continue
 
                     # Skip deal breakers
-                    if _matches_deal_breakers(job_data.get("title", ""), deal_breakers):
+                    if matching_deal_breaker(job_data.get("title", ""), deal_breakers):
                         continue
 
                     # Open detail page for full JD

@@ -48,7 +48,7 @@ export default function ConfigPage() {
   }
 
   if (loading || !config) {
-    return <div className="flex items-center justify-center h-full text-zinc-400 text-sm">加载中...</div>
+    return <div className="flex items-center justify-center h-full text-muted text-sm">加载中...</div>
   }
 
   return (
@@ -74,19 +74,19 @@ export default function ConfigPage() {
           <div className="space-y-4">
             {/* Resume upload */}
             <div>
-              <label className="block text-xs text-zinc-400 mb-2">简历文件</label>
+              <label className="block text-xs text-foreground mb-2">简历文件</label>
               {resumeInfo ? (
-                <div className="flex items-center gap-3 p-3 bg-zinc-800 rounded-md border border-zinc-700">
-                  <span className="text-sm text-zinc-200">📄 {resumeInfo.filename}</span>
-                  <span className="text-xs text-zinc-500">({(resumeInfo.size / 1024).toFixed(1)} KB)</span>
+                <div className="flex items-center gap-3 rounded-md border border-card-border bg-[#FFFCFA] p-3">
+                  <span className="text-sm font-bold text-foreground">📄 {resumeInfo.filename}</span>
+                  <span className="text-xs text-muted">({(resumeInfo.size / 1024).toFixed(1)} KB)</span>
                   <button onClick={handleResumeDelete} className="ml-auto text-red-400 hover:text-red-300">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
               ) : (
-                <label className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-zinc-700 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors">
-                  <Upload className="w-6 h-6 text-zinc-500 mb-2" />
-                  <span className="text-sm text-zinc-400">拖拽或点击上传 (.md)</span>
+                <label className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-card-border p-6 transition-colors hover:border-primary/50 hover:bg-[#FFFCFA]">
+                  <Upload className="mb-2 h-6 w-6 text-muted" />
+                  <span className="text-sm text-muted">拖拽或点击上传 (.md)</span>
                   <input type="file" accept=".md" onChange={handleResumeUpload} className="hidden" />
                 </label>
               )}
@@ -103,7 +103,7 @@ export default function ConfigPage() {
               <TagsInput value={config.profile?.deal_breakers || []} onChange={v => updateConfig('profile.deal_breakers', v)} placeholder="如：外包、996" />
             </Field>
             <div className="flex items-center justify-between">
-              <label className="text-xs text-zinc-400">接受实习/管培岗位</label>
+              <label className="text-xs text-foreground">接受实习/管培岗位</label>
               <Switch checked={config.profile?.allow_internship ?? false} onChange={v => updateConfig('profile.allow_internship', v)} />
             </div>
           </div>
@@ -129,7 +129,7 @@ export default function ConfigPage() {
                         updateConfig('search.cities', newCities)
                         updateConfig('profile.target_cities', newCities)
                       }}
-                      className={`px-2 py-1 text-xs rounded border transition-colors ${selected ? 'bg-primary/20 border-primary/50 text-primary' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500'}`}
+                      className={`px-2 py-1 text-xs rounded border transition-colors ${selected ? 'bg-primary/20 border-primary/50 text-primary' : 'border-card-border bg-[#FFFCFA] text-muted hover:border-primary/40 hover:text-foreground'}`}
                     >
                       {city}
                     </button>
@@ -170,7 +170,7 @@ export default function ConfigPage() {
               </Field>
             </div>
             <div className="flex items-center justify-between">
-              <label className="text-xs text-zinc-400">发送前模拟浏览</label>
+              <label className="text-xs text-foreground">发送前模拟浏览</label>
               <Switch checked={config.throttle?.browse_before_greet ?? true} onChange={v => updateConfig('throttle.browse_before_greet', v)} />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -194,10 +194,10 @@ export default function ConfigPage() {
         <SectionCard title="AI 设置" sectionKey="ai" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">
             <Field label="提供商">
-              <div className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+              <div className="rounded-md border border-card-border bg-[#FFFCFA] px-3 py-2 text-sm font-bold text-foreground">
                 Anthropic / Claude Messages 兼容接口
               </div>
-              <p className="mt-1 text-xs text-zinc-500">当前版本固定使用 Anthropic 兼容链路；如使用兼容 API，请填写 Base URL，并在模型名称中填写目标模型，后端会按 /v1/models 做模糊匹配。</p>
+              <p className="mt-1 text-xs text-muted">当前版本固定使用 Anthropic 兼容链路；如使用兼容 API，请填写 Base URL，并在模型名称中填写目标模型，后端会按 /v1/models 做模糊匹配。</p>
             </Field>
             <Field label="模型名称">
               <Input value={config.ai?.model || ''} onChange={e => updateConfig('ai.model', e.target.value)} />
@@ -223,6 +223,13 @@ export default function ConfigPage() {
             <Field label="每轮最多发简历数">
               <Input type="number" value={config.monitor?.max_resume_sends_per_cycle || 5} onChange={e => updateConfig('monitor.max_resume_sends_per_cycle', Number(e.target.value))} min={1} />
             </Field>
+            <div className="flex items-center justify-between rounded-2xl border border-card-border bg-[#FFFCFA] p-4">
+              <div>
+                <label className="text-sm font-black text-foreground">检测到 HR 问题时自动回复</label>
+                <p className="mt-1 text-xs text-muted">默认关闭。关闭时只生成回复建议，需要你在“监测执行”中确认后发送。</p>
+              </div>
+              <Switch checked={config.monitor?.auto_reply_hr_questions ?? false} onChange={v => updateConfig('monitor.auto_reply_hr_questions', v)} />
+            </div>
           </div>
         </SectionCard>
 
@@ -230,14 +237,14 @@ export default function ConfigPage() {
         <SectionCard title="跟进设置" sectionKey="follow_up" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <label className="text-xs text-zinc-400">启用自动跟进</label>
+              <label className="text-xs text-foreground">启用自动跟进</label>
               <Switch checked={config.follow_up?.enabled ?? true} onChange={v => updateConfig('follow_up.enabled', v)} />
             </div>
             <Field label="跟进间隔 (小时)">
               <Input type="number" value={config.follow_up?.interval_hours || 48} onChange={e => updateConfig('follow_up.interval_hours', Number(e.target.value))} min={12} max={168} />
             </Field>
             <div className="flex items-center justify-between">
-              <label className="text-xs text-zinc-400">跳过周末节假日</label>
+              <label className="text-xs text-foreground">跳过周末节假日</label>
               <Switch checked={config.follow_up?.skip_weekends ?? true} onChange={v => updateConfig('follow_up.skip_weekends', v)} />
             </div>
           </div>
@@ -263,11 +270,11 @@ function SectionCard({ title, sectionKey, expanded, toggle, children }: {
   return (
     <Card>
       <button
-        className="w-full flex items-center justify-between p-4 hover:bg-zinc-800/30 transition-colors"
+        className="w-full flex items-center justify-between p-4 transition-colors hover:bg-[#FFFCFA]"
         onClick={() => toggle(sectionKey)}
       >
-        <span className="text-sm font-medium text-zinc-200">{title}</span>
-        {isExpanded ? <ChevronDown className="w-4 h-4 text-zinc-400" /> : <ChevronRight className="w-4 h-4 text-zinc-400" />}
+        <span className="text-sm font-black text-foreground">{title}</span>
+        {isExpanded ? <ChevronDown className="w-4 h-4 text-foreground" /> : <ChevronRight className="w-4 h-4 text-foreground" />}
       </button>
       {isExpanded && <div className="px-4 pb-4">{children}</div>}
     </Card>
@@ -277,7 +284,7 @@ function SectionCard({ title, sectionKey, expanded, toggle, children }: {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs text-zinc-400 mb-1.5">{label}</label>
+      <label className="block text-xs text-foreground mb-1.5">{label}</label>
       {children}
     </div>
   )
