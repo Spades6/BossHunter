@@ -241,6 +241,71 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertEqual(full_task.context["confirmed_job_ids"], ["ready-job"])
         self.assertEqual(json.loads(response_body)["id"], "full-task")
 
+    def test_web_api_deliver_ignores_stale_stopped_full_task_waiting_context(self):
+        # Arrange
+        stale_event = Event()
+        stale_task = WorkbenchTask(id="stale-full-task", mode="full", label="运行全流程", status="stopped")
+        stale_task.context["waiting_confirmation"] = True
+        stale_task.context["confirmation_event"] = stale_event
+
+        active_event = Event()
+        active_task = WorkbenchTask(id="active-full-task", mode="full", label="运行全流程")
+        active_task.context["waiting_confirmation"] = True
+        active_task.context["confirmation_event"] = active_event
+
+        runner = WorkbenchTaskRunner()
+        runner._tasks[stale_task.id] = stale_task
+        runner._tasks[active_task.id] = active_task
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("ready-job"))
+                update_job_status(db, "ready-job", "ready")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            body = json.dumps({"job_ids": ["ready-job"]}).encode("utf-8")
+            status_headers = {}
+
+            def start_response(status, headers, exc_info=None):
+                status_headers["status"] = status
+                status_headers["headers"] = dict(headers)
+
+            environ = {
+                "REQUEST_METHOD": "POST",
+                "PATH_INFO": "/api/workbench/deliver",
+                "QUERY_STRING": "",
+                "CONTENT_LENGTH": str(len(body)),
+                "CONTENT_TYPE": "application/json",
+                "SERVER_NAME": "127.0.0.1",
+                "SERVER_PORT": "8686",
+                "wsgi.version": (1, 0),
+                "wsgi.url_scheme": "http",
+                "wsgi.input": io.BytesIO(body),
+                "wsgi.errors": io.StringIO(),
+                "wsgi.multithread": False,
+                "wsgi.multiprocess": False,
+                "wsgi.run_once": False,
+            }
+
+            # Act
+            with patch.object(server, "task_runner", runner):
+                response_body = b"".join(
+                    chunk if isinstance(chunk, bytes) else chunk.encode("utf-8")
+                    for chunk in server.app(environ, start_response)
+                ).decode("utf-8")
+
+        # Assert
+        self.assertTrue(status_headers["status"].startswith("200"), response_body)
+        self.assertFalse(stale_event.is_set())
+        self.assertTrue(active_event.is_set())
+        self.assertNotIn("confirmed_job_ids", stale_task.context)
+        self.assertEqual(active_task.context["confirmed_job_ids"], ["ready-job"])
+        self.assertEqual(json.loads(response_body)["id"], "active-full-task")
+
     def test_web_api_full_task_continues_delivery_and_monitoring_after_confirmation(self):
         # Arrange
         calls = []

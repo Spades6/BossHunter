@@ -405,14 +405,19 @@ def api_workbench_deliver():
 
 		if not direct_send:
 			status = task_runner.status()
-			for task_snapshot in status.get("tasks", []):
-				waiting_task = task_runner._tasks.get(task_snapshot["id"])
-				if waiting_task and waiting_task.context.get("waiting_confirmation"):
-					waiting_task.context["confirmed_job_ids"] = job_ids
-					confirmation_event = waiting_task.context.get("confirmation_event")
-					if isinstance(confirmation_event, Event):
-						confirmation_event.set()
-					return _json_response(waiting_task.snapshot())
+			active_task = status.get("active") or {}
+			waiting_task = task_runner._tasks.get(active_task.get("id"))
+			if (
+				waiting_task
+				and waiting_task.mode == "full"
+				and waiting_task.status == "running"
+				and waiting_task.context.get("waiting_confirmation")
+			):
+				waiting_task.context["confirmed_job_ids"] = job_ids
+				confirmation_event = waiting_task.context.get("confirmation_event")
+				if isinstance(confirmation_event, Event):
+					confirmation_event.set()
+				return _json_response(waiting_task.snapshot())
 
 		deliver_options = {"_workbench_job_ids": job_ids}
 		if direct_send:
