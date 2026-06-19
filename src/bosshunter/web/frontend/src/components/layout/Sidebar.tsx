@@ -84,10 +84,13 @@ export function Sidebar({ pendingReplies: pendingRepliesProp }: SidebarProps) {
           href={GITHUB_URL}
           target="_blank"
           rel="noreferrer"
-          className="flex items-center gap-2 rounded-2xl border border-card-border bg-[#FFFCFA] px-3 py-3 text-xs font-black text-foreground transition-colors hover:border-primary/60 hover:text-primary"
+          className="relative flex items-center rounded-2xl border border-card-border bg-[#FFFCFA] px-3 py-3 text-xs font-black text-foreground transition-colors hover:border-primary/60 hover:text-primary"
         >
-          <Github className="h-4 w-4" />
-          <span className="text-base leading-none text-yellow-400">★</span> BossHunter
+          <Github className="absolute left-3 h-4 w-4" />
+          <span className="mx-auto flex items-center justify-center gap-2">
+            <span className="text-xl leading-none text-yellow-400">★</span>
+            BossHunter
+          </span>
         </a>
         <p className="text-center text-[11px] leading-5 text-muted">❤️  欢迎点 Star 支持维护  ❤️</p>
       </div>

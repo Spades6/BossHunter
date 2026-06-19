@@ -237,8 +237,54 @@ class DashboardPageTests(unittest.TestCase):
         self.assertIn("onClick={refresh}", self.source)
 
 
+class SidebarTests(unittest.TestCase):
+    def setUp(self):
+        # Arrange
+        self.source = (
+            ROOT
+            / "src"
+            / "bosshunter"
+            / "web"
+            / "frontend"
+            / "src"
+            / "components"
+            / "layout"
+            / "Sidebar.tsx"
+        ).read_text(encoding="utf-8")
+
+    def test_sidebar_star_link_places_github_icon_left_and_centers_star_label(self):
+        # Act / Assert
+        self.assertIn("relative flex items-center", self.source)
+        self.assertIn("absolute left-3", self.source)
+        self.assertIn("mx-auto flex items-center justify-center", self.source)
+        self.assertIn("text-xl", self.source)
+        self.assertIn("text-yellow-400", self.source)
+
+
+class HeaderTests(unittest.TestCase):
+    def setUp(self):
+        # Arrange
+        self.source = (
+            ROOT
+            / "src"
+            / "bosshunter"
+            / "web"
+            / "frontend"
+            / "src"
+            / "components"
+            / "layout"
+            / "Header.tsx"
+        ).read_text(encoding="utf-8")
+
+    def test_header_version_metadata_right_side_omits_duplicate_console_label(self):
+        # Act / Assert
+        self.assertNotIn("v2.0 · 本地控制台", self.source)
+        self.assertIn("本地服务运行中", self.source)
+
+
 class ConfigPageTests(unittest.TestCase):
     def setUp(self):
+        # Arrange
         self.source = (
             ROOT
             / "src"
@@ -249,17 +295,39 @@ class ConfigPageTests(unittest.TestCase):
             / "pages"
             / "ConfigPage.tsx"
         ).read_text(encoding="utf-8")
+        self.hook_source = (
+            ROOT
+            / "src"
+            / "bosshunter"
+            / "web"
+            / "frontend"
+            / "src"
+            / "hooks"
+            / "useConfig.ts"
+        ).read_text(encoding="utf-8")
 
     def test_config_page_does_not_render_prefilter_threshold(self):
+        # Act / Assert
         self.assertNotIn("prefilter_threshold", self.source)
         self.assertNotIn("预筛阈值", self.source)
 
     def test_allow_internship_switch_appears_below_deal_breakers(self):
+        # Act
         deal_breakers_index = self.source.index("排除关键词")
         allow_internship_index = self.source.index("接受实习/管培岗位")
 
+        # Assert
         self.assertGreater(allow_internship_index, deal_breakers_index)
         self.assertIn("profile.allow_internship", self.source)
+
+    def test_config_page_api_failure_displays_error_instead_of_infinite_loading(self):
+        # Act / Assert
+        self.assertIn("error", self.hook_source)
+        self.assertIn("!configRes.ok", self.hook_source)
+        self.assertIn("!schemaRes.ok", self.hook_source)
+        self.assertIn("配置加载失败", self.source)
+        self.assertIn("请确认后端服务已启动", self.source)
+        self.assertIn("error", self.source)
 
 
 class ConfigSchemaTests(unittest.TestCase):
