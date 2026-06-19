@@ -15,11 +15,22 @@ from bottle import Bottle, request, response, static_file, abort
 from bosshunter import __version__
 from bosshunter.config import load_config, CITY_CODES
 from bosshunter.db import (
-	get_db, get_stats, get_funnel_stats, get_daily_activity,
-	get_top_companies, get_recent_history
+	add_history,
+	get_db,
+	get_funnel_stats,
+	get_jobs_needing_resume,
+	get_jobs_ready_to_send,
+	get_jobs_with_send_errors,
+	get_pending_scored_jobs,
+	get_recent_history,
+	get_stats,
+	get_top_companies,
+	update_job_status,
 )
+from bosshunter.web.tasks import TaskAlreadyRunningError, WorkbenchTask, WorkbenchTaskRunner
 
 app = Bottle()
+task_runner = WorkbenchTaskRunner()
 
 # Paths
 FRONTEND_DIR = Path(__file__).parent / "frontend" / "dist"
@@ -123,6 +134,81 @@ def _sanitize_config_for_write(data):
 	return cleaned
 
 
+def _preflight_messages(mode: str, config: dict) -> list[str]:
+	"""Return user-actionable blockers before starting a dashboard task."""
+	messages: list[str] = []
+	if mode not in {"full", "collect", "monitor"}:
+		messages.append(f"不支持的任务模式：{mode}")
+
+	profile = config.get("profile", {})
+	resume_path = profile.get("resume_path", "")
+	if not resume_path or not Path(str(resume_path)).exists():
+		messages.append("请先在配置页上传 Markdown 简历。")
+
+	if mode in {"full", "collect"} and not config.get("search", {}).get("keywords"):
+		messages.append("请先在配置页填写搜索关键词。")
+
+	return messages
+
+
+def _task_config(extra: dict | None = None) -> dict:
+	config = load_config(CONFIG_PATH)
+	if extra:
+		config.update(extra)
+	return config
+
+
+def _log(task: WorkbenchTask, message: str) -> None:
+	task.logs.append(message)
+
+
+def _execute_collect(task: WorkbenchTask, config: dict) -> None:
+	from bosshunter.ai.scorer import score_jobs
+	from bosshunter.scraper.jobs import scrape_jobs
+
+	keywords = config.get("search", {}).get("keywords", [])
+	_log(task, "开始采集岗位")
+	scrape_jobs(config, keywords, limit=30)
+	if task.stop_requested.is_set():
+		return
+	_log(task, "开始 AI 评分")
+	score_jobs(config)
+
+
+def _execute_monitor(task: WorkbenchTask, config: dict) -> None:
+	from bosshunter.executor.monitor import monitor_and_send_resumes
+
+	_log(task, "执行一轮监测")
+	monitor_and_send_resumes(config)
+	_log(task, "本轮监测完成，30 分钟后再次检查")
+
+
+def _execute_full(task: WorkbenchTask, config: dict) -> None:
+	_execute_collect(task, config)
+	if not task.stop_requested.is_set():
+		_log(task, "等待前端确认投递")
+
+
+def _execute_deliver(task: WorkbenchTask, config: dict) -> None:
+	from bosshunter.ai.greeter import generate_greetings
+	from bosshunter.executor.sender import send_greetings
+
+	_log(task, "生成招呼语")
+	generate_greetings(config)
+	if task.stop_requested.is_set():
+		return
+	_log(task, "发送招呼语")
+	send_greetings(config, force=True)
+
+
+task_runner._executors.update({
+	"full": _execute_full,
+	"collect": _execute_collect,
+	"monitor": _execute_monitor,
+	"deliver": _execute_deliver,
+})
+
+
 # ─── Health ───────────────────────────────────────────────
 
 @app.route("/api/health")
@@ -206,6 +292,136 @@ def api_history():
 		return _json_response(data)
 	finally:
 		db.close()
+
+
+@app.route("/api/workbench")
+def api_workbench():
+	db = _get_web_db()
+	try:
+		threshold = load_config(CONFIG_PATH).get("scoring", {}).get("threshold", 60)
+		status = task_runner.status()
+		return _json_response({
+			"funnel": get_funnel_stats(db),
+			"pending_confirmation": get_pending_scored_jobs(db, threshold),
+			"pending_greetings": get_jobs_ready_to_send(db),
+			"send_errors": get_jobs_with_send_errors(db),
+			"needs_resume": get_jobs_needing_resume(db),
+			"task": status["active"],
+			"last_task": status["last_task"],
+		})
+	finally:
+		db.close()
+
+
+@app.route("/api/workbench/preflight")
+def api_workbench_preflight():
+	mode = request.params.get("mode", "")
+	try:
+		config = load_config(CONFIG_PATH)
+		messages = _preflight_messages(mode, config)
+		return _json_response({"ok": not messages, "messages": messages})
+	except Exception as e:
+		return _json_response({"ok": False, "messages": [str(e)]}, 500)
+
+
+@app.route("/api/workbench/task", method="POST")
+def api_workbench_task_start():
+	try:
+		body = request.json or {}
+		mode = body.get("mode", "")
+		messages = _preflight_messages(mode, load_config(CONFIG_PATH))
+		if messages:
+			return _json_response({"error": "请先处理启动前检查", "messages": messages}, 400)
+		task = task_runner.start(mode, _task_config())
+		return _json_response(task)
+	except TaskAlreadyRunningError as e:
+		return _json_response({"error": str(e)}, 409)
+	except Exception as e:
+		return _json_response({"error": str(e)}, 500)
+
+
+@app.route("/api/workbench/task/<task_id>/stop", method="POST")
+def api_workbench_task_stop(task_id):
+	try:
+		return _json_response(task_runner.stop(task_id))
+	except KeyError:
+		return _json_response({"error": "任务不存在"}, 404)
+	except Exception as e:
+		return _json_response({"error": str(e)}, 500)
+
+
+@app.route("/api/workbench/deliver", method="POST")
+def api_workbench_deliver():
+	try:
+		body = request.json or {}
+		job_ids = [str(job_id) for job_id in body.get("job_ids", []) if str(job_id)]
+		if not job_ids:
+			return _json_response({"error": "请选择要投递的岗位"}, 400)
+
+		db = _get_web_db()
+		try:
+			for job_id in job_ids:
+				update_job_status(db, job_id, "approved")
+				add_history(db, job_id, "approved", "Web Dashboard 确认投递")
+		finally:
+			db.close()
+
+		task = task_runner.start("deliver", _task_config({"_workbench_job_ids": job_ids}))
+		return _json_response(task)
+	except TaskAlreadyRunningError as e:
+		return _json_response({"error": str(e)}, 409)
+	except Exception as e:
+		return _json_response({"error": str(e)}, 500)
+
+
+@app.route("/api/jobs/<job_id>")
+def api_job_detail(job_id):
+	db = _get_web_db()
+	try:
+		row = db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+		if not row:
+			return _json_response({"error": "岗位不存在"}, 404)
+		return _json_response(dict(row))
+	finally:
+		db.close()
+
+
+@app.route("/api/jobs/<job_id>/mark-resume-sent", method="POST")
+def api_job_mark_resume_sent(job_id):
+	db = _get_web_db()
+	try:
+		update_job_status(db, job_id, "resume_sent")
+		add_history(db, job_id, "resume_sent", "Web Dashboard 标记定制简历已发送")
+		return _json_response({"success": True})
+	finally:
+		db.close()
+
+
+@app.route("/api/jobs/<job_id>/resume/download")
+def api_job_resume_download(job_id):
+	db = _get_web_db()
+	try:
+		row = db.execute("SELECT resume_path FROM jobs WHERE id = ?", (job_id,)).fetchone()
+		if not row or not row["resume_path"]:
+			return _json_response({"error": "定制简历不存在"}, 404)
+		resume_path = Path(row["resume_path"])
+		if not resume_path.exists():
+			return _json_response({"error": "定制简历文件不存在"}, 404)
+		return static_file(resume_path.name, root=str(resume_path.parent), download=resume_path.name)
+	finally:
+		db.close()
+
+
+@app.route("/api/history/<history_id>/reply", method="POST")
+def api_history_reply(history_id):
+	try:
+		body = request.json or {}
+		message = str(body.get("message", "")).strip()
+		if not message:
+			return _json_response({"error": "回复内容不能为空"}, 400)
+		return _json_response({"success": True, "message": "回复已记录，请在招聘平台手动发送。"})
+	except Exception as e:
+		return _json_response({"error": str(e)}, 500)
 
 
 # ─── Config APIs ─────────────────────────────────────────
@@ -361,6 +577,9 @@ def serve_assets(filepath):
 @app.route("/")
 @app.route("/<filepath:path>")
 def serve_spa(filepath="index.html"):
+	if str(filepath).startswith("api/"):
+		return _json_response({"error": "Not found"}, 404)
+
 	# Try serving the exact file first
 	file_path = FRONTEND_DIR / filepath
 	if file_path.is_file():
