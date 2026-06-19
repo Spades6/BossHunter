@@ -185,7 +185,7 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertEqual(active["status"], "running")
         self.assertIn("等待前端确认投递", active["logs"])
 
-    def test_web_api_deliver_releases_full_task_waiting_for_confirmation(self):
+    def test_web_api_deliver_hands_selected_jobs_to_waiting_full_task(self):
         # Arrange
         confirmation_event = Event()
         full_task = WorkbenchTask(id="full-task", mode="full", label="运行全流程")
@@ -238,6 +238,42 @@ class WebApiRouteTests(unittest.TestCase):
         # Assert
         self.assertTrue(status_headers["status"].startswith("200"), response_body)
         self.assertTrue(confirmation_event.is_set())
+        self.assertEqual(full_task.context["confirmed_job_ids"], ["ready-job"])
+        self.assertEqual(json.loads(response_body)["id"], "full-task")
+
+    def test_web_api_full_task_continues_delivery_and_monitoring_after_confirmation(self):
+        # Arrange
+        calls = []
+
+        def fake_collect(task, config):
+            calls.append("collect")
+
+        def fake_deliver(task, config):
+            calls.append(("deliver", config.get("_workbench_job_ids")))
+
+        def fake_monitor(task, config):
+            calls.append("monitor")
+
+        runner = WorkbenchTaskRunner()
+        runner._executors["full"] = lambda task, config: server._execute_full(task, config)
+
+        # Act
+        with patch.object(server, "_execute_collect", side_effect=fake_collect), \
+             patch.object(server, "_execute_deliver", side_effect=fake_deliver), \
+             patch.object(server, "_execute_monitor", side_effect=fake_monitor):
+            task = runner.start("full", {})
+            for _ in range(50):
+                running_task = runner._tasks[task["id"]]
+                confirmation_event = running_task.context.get("confirmation_event")
+                if isinstance(confirmation_event, Event):
+                    running_task.context["confirmed_job_ids"] = ["ready-a", "ready-b"]
+                    confirmation_event.set()
+                    break
+                time.sleep(0.01)
+            runner.wait(timeout=1)
+
+        # Assert
+        self.assertEqual(calls, ["collect", ("deliver", ["ready-a", "ready-b"]), "monitor"])
 
     def test_web_api_workbench_reject_marks_selected_ready_jobs_rejected(self):
         # Arrange
@@ -314,6 +350,55 @@ class WebApiRouteTests(unittest.TestCase):
                 {"job_id": "reject-b", "action": "rejected", "detail": "Web Dashboard 放弃投递"},
             ],
         )
+
+    def test_web_api_workbench_reject_removes_jobs_from_pending_confirmation(self):
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("reject-visible"))
+                update_job_score(db, "reject-visible", 82, "good match")
+                update_job_status(db, "reject-visible", "ready")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            body = json.dumps({"job_ids": ["reject-visible"]}).encode("utf-8")
+            status_headers = {}
+
+            def start_response(status, headers, exc_info=None):
+                status_headers["status"] = status
+                status_headers["headers"] = dict(headers)
+
+            environ = {
+                "REQUEST_METHOD": "POST",
+                "PATH_INFO": "/api/workbench/reject",
+                "QUERY_STRING": "",
+                "CONTENT_LENGTH": str(len(body)),
+                "CONTENT_TYPE": "application/json",
+                "SERVER_NAME": "127.0.0.1",
+                "SERVER_PORT": "8686",
+                "wsgi.version": (1, 0),
+                "wsgi.url_scheme": "http",
+                "wsgi.input": io.BytesIO(body),
+                "wsgi.errors": io.StringIO(),
+                "wsgi.multithread": False,
+                "wsgi.multiprocess": False,
+                "wsgi.run_once": False,
+            }
+
+            # Act
+            response_body = b"".join(
+                chunk if isinstance(chunk, bytes) else chunk.encode("utf-8")
+                for chunk in server.app(environ, start_response)
+            ).decode("utf-8")
+            workbench_status, _, workbench_body = self._request("/api/workbench")
+
+        # Assert
+        self.assertTrue(status_headers["status"].startswith("200"), response_body)
+        self.assertTrue(workbench_status.startswith("200"), workbench_body)
+        self.assertEqual(json.loads(workbench_body)["pending_confirmation"], [])
 
 
 if __name__ == "__main__":

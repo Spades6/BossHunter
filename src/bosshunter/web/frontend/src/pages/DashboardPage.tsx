@@ -214,11 +214,33 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
         const data = await res.json().catch(() => ({}))
         throw new Error(data.error || '放弃失败')
       }
+      const rejectedIds = new Set(ids)
+      setSelected(prev => prev.filter(id => !rejectedIds.has(id)))
+      setConfirmedDeliveryIds(prev => new Set([...prev, ...ids]))
       await refresh()
       setNotice(`已放弃 ${count} 个岗位。`)
-      setSelected(prev => prev.filter(id => !new Set(ids).has(id)))
     } catch (err) {
       setNotice(err instanceof Error ? err.message : '放弃失败')
+    }
+  }
+
+  const sendReadyGreetings = async (ids: string[]) => {
+    if (!ids.length) return
+    const count = ids.length
+    try {
+      const res = await fetch('/api/workbench/deliver', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_ids: ids, direct_send: true }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || '发送失败')
+      }
+      await refresh()
+      setNotice(`已直接进入发送流程 ${count} 个岗位。`)
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : '发送失败')
     }
   }
 
@@ -400,7 +422,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
                 </div>
                 <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted">{job.greeting || '招呼语已生成，等待重新发送。'}</p>
                 <div className="mt-3 flex gap-2">
-                  <Button size="sm" onClick={() => confirmDeliver([job.id])}>重新发送</Button>
+                  <Button size="sm" onClick={() => sendReadyGreetings([job.id])}>重新发送</Button>
                   <Button variant="secondary" size="sm" onClick={() => openJobDetail(job)}><Eye className="mr-2 h-4 w-4" />查看详情</Button>
                   <Button variant="secondary" size="sm" disabled={!job.url} onClick={() => window.open(job.url, '_blank', 'noopener,noreferrer')}><ExternalLink className="mr-2 h-4 w-4" />跳转岗位链接</Button>
                 </div>
@@ -417,7 +439,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
               <h3 className="text-lg font-black">待发送招呼语</h3>
               <p className="mt-1 text-xs text-muted">这些岗位已确认并生成招呼语，点击后会直接进入发送流程。</p>
             </div>
-            <Button size="sm" onClick={() => confirmDeliver(pendingGreetingJobs.map(job => job.id))}>发送全部 {pendingGreetingJobs.length} 个</Button>
+            <Button size="sm" onClick={() => sendReadyGreetings(pendingGreetingJobs.map(job => job.id))}>发送全部 {pendingGreetingJobs.length} 个</Button>
           </div>
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {pendingGreetingJobs.map(job => (
@@ -431,7 +453,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
                 </div>
                 <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted">{job.greeting || '招呼语已生成，等待发送。'}</p>
                 <div className="mt-3 flex gap-2">
-                  <Button size="sm" onClick={() => confirmDeliver([job.id])}>发送招呼语</Button>
+                  <Button size="sm" onClick={() => sendReadyGreetings([job.id])}>发送招呼语</Button>
                   <Button variant="secondary" size="sm" onClick={() => openJobDetail(job)}><Eye className="mr-2 h-4 w-4" />查看详情</Button>
                   <Button variant="secondary" size="sm" disabled={!job.url} onClick={() => window.open(job.url, '_blank', 'noopener,noreferrer')}><ExternalLink className="mr-2 h-4 w-4" />跳转岗位链接</Button>
                 </div>

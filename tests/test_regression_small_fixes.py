@@ -246,6 +246,16 @@ class DashboardPageTests(unittest.TestCase):
         self.assertIn("确定放弃这", self.source)
         self.assertIn("setSelected(prev => prev.filter", self.source)
 
+    def test_dashboard_sends_ready_greetings_without_second_confirmation(self):
+        # Arrange: DashboardPage source is loaded in setUp.
+
+        # Act / Assert
+        self.assertIn("sendReadyGreetings", self.source)
+        self.assertIn("direct_send: true", self.source)
+        self.assertIn("已直接进入发送流程", self.source)
+        self.assertNotIn("confirmDeliver(pendingGreetingJobs.map", self.source)
+        self.assertNotIn("confirmDeliver([job.id])}>发送招呼语", self.source)
+
 
 class SidebarTests(unittest.TestCase):
     def setUp(self):
