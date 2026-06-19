@@ -9,6 +9,7 @@ import json
 import time
 from copy import deepcopy
 from pathlib import Path
+from threading import Event
 
 from bottle import Bottle, request, response, static_file, abort
 
@@ -20,9 +21,9 @@ from bosshunter.db import (
 	get_db,
 	get_funnel_stats,
 	get_jobs_needing_resume,
+	get_jobs_pending_confirmation,
 	get_jobs_ready_to_send,
 	get_jobs_with_send_errors,
-	get_pending_scored_jobs,
 	get_recent_history,
 	get_stats,
 	get_top_companies,
@@ -187,7 +188,12 @@ def _execute_monitor(task: WorkbenchTask, config: dict) -> None:
 def _execute_full(task: WorkbenchTask, config: dict) -> None:
 	_execute_collect(task, config)
 	if not task.stop_requested.is_set():
+		confirmation_event = Event()
+		task.context["waiting_confirmation"] = True
+		task.context["confirmation_event"] = confirmation_event
 		_log(task, "等待前端确认投递")
+		while not task.stop_requested.is_set() and not confirmation_event.wait(0.5):
+			pass
 
 
 def _execute_deliver(task: WorkbenchTask, config: dict) -> None:
@@ -303,7 +309,10 @@ def api_workbench():
 		status = task_runner.status()
 		return _json_response({
 			"funnel": get_funnel_stats(db),
-			"pending_confirmation": get_pending_scored_jobs(db, threshold),
+			"pending_confirmation": [
+				job for job in get_jobs_pending_confirmation(db)
+				if int(job.get("score") or 0) >= threshold
+			],
 			"pending_greetings": get_jobs_ready_to_send(db),
 			"send_errors": get_jobs_with_send_errors(db),
 			"needs_resume": get_jobs_needing_resume(db),
@@ -368,6 +377,13 @@ def api_workbench_deliver():
 			db.close()
 
 		task = task_runner.start("deliver", _task_config({"_workbench_job_ids": job_ids}))
+		status = task_runner.status()
+		for task_snapshot in status.get("tasks", []):
+			waiting_task = task_runner._tasks.get(task_snapshot["id"])
+			if waiting_task and waiting_task.context.get("waiting_confirmation"):
+				confirmation_event = waiting_task.context.get("confirmation_event")
+				if isinstance(confirmation_event, Event):
+					confirmation_event.set()
 		return _json_response(task)
 	except TaskAlreadyRunningError as e:
 		return _json_response({"error": str(e)}, 409)
