@@ -16,7 +16,7 @@ const CITIES = [
 ]
 
 export default function ConfigPage() {
-  const { config, schema, loading, saving, dirty, message, updateConfig, saveConfig, resetConfig } = useConfig()
+  const { config, schema, loading, saving, dirty, error, message, updateConfig, saveConfig, resetConfig } = useConfig()
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({ profile: true, search: true })
   const [resumeInfo, setResumeInfo] = useState<any>(null)
 
@@ -47,8 +47,23 @@ export default function ConfigPage() {
     updateConfig('profile.resume_path', '')
   }
 
-  if (loading || !config) {
+  if (loading) {
     return <div className="flex items-center justify-center h-full text-muted text-sm">加载中...</div>
+  }
+
+  if (error || !config) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="max-w-md rounded-2xl border border-card-border bg-[#FFFCFA] p-6 text-center">
+          <div className="text-sm font-black text-foreground">配置加载失败</div>
+          <p className="mt-2 text-xs leading-6 text-muted">
+            请确认后端服务已启动：在项目根目录运行 bosshunter web，或启动 127.0.0.1:8686 后刷新页面。
+          </p>
+          {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-500">{error}</p>}
+          <Button className="mt-4" size="sm" onClick={resetConfig}>重试</Button>
+        </div>
+      </div>
+    )
   }
 
   return (

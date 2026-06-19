@@ -1,6 +1,8 @@
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from bosshunter.db import (
     get_db,
@@ -12,6 +14,7 @@ from bosshunter.db import (
     update_job_score,
     update_job_status,
 )
+from bosshunter.executor.sender import send_greetings
 
 
 def _job(job_id: str, title: str = "Engineer") -> dict:
@@ -97,6 +100,49 @@ class JobSelectionTests(unittest.TestCase):
                 db.close()
 
         self.assertEqual([job["id"] for job in jobs], ["send-failed"])
+
+    def test_send_greetings_force_bypasses_send_window_restriction(self):
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "bosshunter.db"
+            db = get_db(db_path)
+            try:
+                insert_job(db, _job("sendable"))
+                update_job_status(db, "sendable", "ready")
+                update_job_greeting(db, "sendable", "Ready to send.")
+            finally:
+                db.close()
+
+            config = {
+                "throttle": {
+                    "send_windows": ["09:00-16:00"],
+                    "daily_limit": 30,
+                    "interval_min": 0,
+                    "interval_max": 0,
+                    "browse_before_greet": False,
+                }
+            }
+
+            # Act
+            with patch("bosshunter.db.DB_PATH", db_path), \
+                 patch("bosshunter.throttle.datetime") as mock_datetime, \
+                 patch("bosshunter.executor.sender._send_greeting_once", return_value=({"success": True}, None)):
+                mock_datetime.now.return_value = datetime(2026, 6, 19, 20, 0)
+                sent = send_greetings(config, force=True)
+
+            verify_db = get_db(db_path)
+            try:
+                status = verify_db.execute("SELECT status FROM jobs WHERE id = 'sendable'").fetchone()["status"]
+                outside_window_events = verify_db.execute(
+                    "SELECT COUNT(*) AS c FROM risk_events WHERE event_type = 'outside_window'"
+                ).fetchone()["c"]
+            finally:
+                verify_db.close()
+
+        # Assert
+        self.assertEqual(sent, 1)
+        self.assertEqual(status, "sent")
+        self.assertEqual(outside_window_events, 0)
 
 
 if __name__ == "__main__":

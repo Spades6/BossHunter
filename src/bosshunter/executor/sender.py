@@ -146,10 +146,10 @@ def send_greetings(config: dict, force: bool = False) -> int:
         db.close()
         return 0
 
-    # Anti-ban: send window check
+    # Anti-ban: send window check (可通过 --force 跳过)
     send_windows = throttle_config.get("send_windows", [])
     window_checker = SendWindowChecker(send_windows)
-    if not window_checker.is_active():
+    if not force and not window_checker.is_active():
         info = window_checker.next_window_info()
         console.print("[yellow]⏰ 当前不在发送时间窗口内，暂不发送[/yellow]")
         console.print(f"[dim]  {info}[/dim]")

@@ -6,14 +6,18 @@ export function useConfig() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   const fetchConfig = async () => {
     try {
+      setError(null)
       const [configRes, schemaRes] = await Promise.all([
         fetch('/api/config'),
         fetch('/api/config/schema'),
       ])
+      if (!configRes.ok) throw new Error('配置接口请求失败')
+      if (!schemaRes.ok) throw new Error('配置结构接口请求失败')
       const configData = await configRes.json()
       const schemaData = await schemaRes.json()
       setConfig(configData)
@@ -21,6 +25,8 @@ export function useConfig() {
       setDirty(false)
     } catch (err) {
       console.error('Failed to fetch config:', err)
+      setConfig(null)
+      setError(err instanceof Error ? err.message : '配置加载失败')
     } finally {
       setLoading(false)
     }
@@ -76,5 +82,5 @@ export function useConfig() {
     fetchConfig()
   }
 
-  return { config, schema, loading, saving, dirty, message, updateConfig, saveConfig, resetConfig }
+  return { config, schema, loading, saving, dirty, error, message, updateConfig, saveConfig, resetConfig }
 }

@@ -9,6 +9,7 @@ import json
 import time
 from copy import deepcopy
 from pathlib import Path
+from threading import Event
 
 from bottle import Bottle, request, response, static_file, abort
 
@@ -20,9 +21,9 @@ from bosshunter.db import (
 	get_db,
 	get_funnel_stats,
 	get_jobs_needing_resume,
+	get_jobs_pending_confirmation,
 	get_jobs_ready_to_send,
 	get_jobs_with_send_errors,
-	get_pending_scored_jobs,
 	get_recent_history,
 	get_stats,
 	get_top_companies,
@@ -179,25 +180,55 @@ def _execute_collect(task: WorkbenchTask, config: dict) -> None:
 def _execute_monitor(task: WorkbenchTask, config: dict) -> None:
 	from bosshunter.executor.monitor import monitor_and_send_resumes
 
-	_log(task, "执行一轮监测")
-	monitor_and_send_resumes(config)
-	_log(task, "本轮监测完成，30 分钟后再次检查")
+	interval_min = int(config.get("monitor", {}).get("interval", 30) or 30)
+	interval_sec = max(interval_min * 60, 1)
+	while not task.stop_requested.is_set():
+		_log(task, "执行一轮监测")
+		monitor_and_send_resumes(config)
+		if task.stop_requested.is_set():
+			return
+		_log(task, f"本轮监测完成，{interval_min} 分钟后再次检查")
+		task.stop_requested.wait(interval_sec)
 
 
 def _execute_full(task: WorkbenchTask, config: dict) -> None:
 	_execute_collect(task, config)
-	if not task.stop_requested.is_set():
-		_log(task, "等待前端确认投递")
+	if task.stop_requested.is_set():
+		return
+
+	confirmation_event = Event()
+	task.context["waiting_confirmation"] = True
+	task.context["confirmation_event"] = confirmation_event
+	_log(task, "等待前端确认投递")
+	while not task.stop_requested.is_set() and not confirmation_event.wait(0.5):
+		pass
+	if task.stop_requested.is_set():
+		return
+
+	job_ids = [str(job_id) for job_id in task.context.get("confirmed_job_ids", []) if str(job_id)]
+	if not job_ids:
+		_log(task, "未收到前端确认岗位，流程结束")
+		return
+
+	task.context["waiting_confirmation"] = False
+	_log(task, f"前端已确认 {len(job_ids)} 个岗位，继续投递")
+	deliver_config = dict(config)
+	deliver_config["_workbench_job_ids"] = job_ids
+	_execute_deliver(task, deliver_config)
+	if task.stop_requested.is_set():
+		return
+	_execute_monitor(task, config)
 
 
 def _execute_deliver(task: WorkbenchTask, config: dict) -> None:
 	from bosshunter.ai.greeter import generate_greetings
 	from bosshunter.executor.sender import send_greetings
 
-	_log(task, "生成招呼语")
-	generate_greetings(config)
-	if task.stop_requested.is_set():
-		return
+	if not config.get("_workbench_skip_greeting"):
+		_log(task, "生成招呼语")
+		generate_greetings(config)
+		if task.stop_requested.is_set():
+			return
 	_log(task, "发送招呼语")
 	send_greetings(config, force=True)
 
@@ -303,7 +334,10 @@ def api_workbench():
 		status = task_runner.status()
 		return _json_response({
 			"funnel": get_funnel_stats(db),
-			"pending_confirmation": get_pending_scored_jobs(db, threshold),
+			"pending_confirmation": [
+				job for job in get_jobs_pending_confirmation(db)
+				if int(job.get("score") or 0) >= threshold
+			],
 			"pending_greetings": get_jobs_ready_to_send(db),
 			"send_errors": get_jobs_with_send_errors(db),
 			"needs_resume": get_jobs_needing_resume(db),
@@ -359,18 +393,60 @@ def api_workbench_deliver():
 		if not job_ids:
 			return _json_response({"error": "请选择要投递的岗位"}, 400)
 
+		direct_send = bool(body.get("direct_send"))
 		db = _get_web_db()
 		try:
 			for job_id in job_ids:
 				update_job_status(db, job_id, "approved")
-				add_history(db, job_id, "approved", "Web Dashboard 确认投递")
+				if not direct_send:
+					add_history(db, job_id, "approved", "Web Dashboard 确认投递")
 		finally:
 			db.close()
 
-		task = task_runner.start("deliver", _task_config({"_workbench_job_ids": job_ids}))
+		if not direct_send:
+			status = task_runner.status()
+			active_task = status.get("active") or {}
+			waiting_task = task_runner._tasks.get(active_task.get("id"))
+			if (
+				waiting_task
+				and waiting_task.mode == "full"
+				and waiting_task.status == "running"
+				and waiting_task.context.get("waiting_confirmation")
+			):
+				waiting_task.context["confirmed_job_ids"] = job_ids
+				confirmation_event = waiting_task.context.get("confirmation_event")
+				if isinstance(confirmation_event, Event):
+					confirmation_event.set()
+				return _json_response(waiting_task.snapshot())
+
+		deliver_options = {"_workbench_job_ids": job_ids}
+		if direct_send:
+			deliver_options["_workbench_skip_greeting"] = True
+		task = task_runner.start("deliver", _task_config(deliver_options))
 		return _json_response(task)
 	except TaskAlreadyRunningError as e:
 		return _json_response({"error": str(e)}, 409)
+	except Exception as e:
+		return _json_response({"error": str(e)}, 500)
+
+
+@app.route("/api/workbench/reject", method="POST")
+def api_workbench_reject():
+	try:
+		body = request.json or {}
+		job_ids = [str(job_id) for job_id in body.get("job_ids", []) if str(job_id)]
+		if not job_ids:
+			return _json_response({"error": "请选择要放弃的岗位"}, 400)
+
+		db = _get_web_db()
+		try:
+			for job_id in job_ids:
+				update_job_status(db, job_id, "rejected")
+				add_history(db, job_id, "rejected", "Web Dashboard 放弃投递")
+		finally:
+			db.close()
+
+		return _json_response({"success": True, "count": len(job_ids)})
 	except Exception as e:
 		return _json_response({"error": str(e)}, 500)
 
