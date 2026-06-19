@@ -239,6 +239,82 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertTrue(status_headers["status"].startswith("200"), response_body)
         self.assertTrue(confirmation_event.is_set())
 
+    def test_web_api_workbench_reject_marks_selected_ready_jobs_rejected(self):
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("reject-a"))
+                update_job_score(db, "reject-a", 82, "good match")
+                update_job_status(db, "reject-a", "ready")
+
+                insert_job(db, _job("reject-b"))
+                update_job_score(db, "reject-b", 72, "ok match")
+                update_job_status(db, "reject-b", "ready")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            body = json.dumps({"job_ids": ["reject-a", "reject-b"]}).encode("utf-8")
+            status_headers = {}
+
+            def start_response(status, headers, exc_info=None):
+                status_headers["status"] = status
+                status_headers["headers"] = dict(headers)
+
+            environ = {
+                "REQUEST_METHOD": "POST",
+                "PATH_INFO": "/api/workbench/reject",
+                "QUERY_STRING": "",
+                "CONTENT_LENGTH": str(len(body)),
+                "CONTENT_TYPE": "application/json",
+                "SERVER_NAME": "127.0.0.1",
+                "SERVER_PORT": "8686",
+                "wsgi.version": (1, 0),
+                "wsgi.url_scheme": "http",
+                "wsgi.input": io.BytesIO(body),
+                "wsgi.errors": io.StringIO(),
+                "wsgi.multithread": False,
+                "wsgi.multiprocess": False,
+                "wsgi.run_once": False,
+            }
+
+            # Act
+            response_body = b"".join(
+                chunk if isinstance(chunk, bytes) else chunk.encode("utf-8")
+                for chunk in server.app(environ, start_response)
+            ).decode("utf-8")
+
+            verify_db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                statuses = {
+                    row["id"]: row["status"]
+                    for row in verify_db.execute(
+                        "SELECT id, status FROM jobs WHERE id IN ('reject-a', 'reject-b')"
+                    ).fetchall()
+                }
+                history_actions = [
+                    dict(row)
+                    for row in verify_db.execute(
+                        "SELECT job_id, action, detail FROM history ORDER BY id"
+                    ).fetchall()
+                ]
+            finally:
+                verify_db.close()
+
+        # Assert
+        self.assertTrue(status_headers["status"].startswith("200"), response_body)
+        self.assertEqual(json.loads(response_body), {"success": True, "count": 2})
+        self.assertEqual(statuses, {"reject-a": "rejected", "reject-b": "rejected"})
+        self.assertEqual(
+            history_actions,
+            [
+                {"job_id": "reject-a", "action": "rejected", "detail": "Web Dashboard 放弃投递"},
+                {"job_id": "reject-b", "action": "rejected", "detail": "Web Dashboard 放弃投递"},
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

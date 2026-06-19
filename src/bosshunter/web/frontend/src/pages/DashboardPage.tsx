@@ -200,6 +200,28 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
     }
   }
 
+  const rejectSelectedJobs = async (ids: string[]) => {
+    if (!ids.length) return
+    const count = ids.length
+    if (!window.confirm(`确定放弃这 ${count} 个岗位吗？放弃后不会进入投递，可在岗位池中查看已拒绝状态。`)) return
+    try {
+      const res = await fetch('/api/workbench/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_ids: ids }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || '放弃失败')
+      }
+      await refresh()
+      setNotice(`已放弃 ${count} 个岗位。`)
+      setSelected(prev => prev.filter(id => !new Set(ids).has(id)))
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : '放弃失败')
+    }
+  }
+
   const openJobDetail = async (job: Job) => {
     try {
       const res = await fetch(`/api/jobs/${job.id}`)
@@ -428,6 +450,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" onClick={() => setSelected(todayJobs.map(job => job.id))}>全选</Button>
             <Button variant="secondary" size="sm" onClick={() => setSelected([])}>清空</Button>
+            <Button variant="secondary" size="sm" onClick={() => rejectSelectedJobs(selected)}>放弃已选 {selected.length} 个</Button>
             <Button size="sm" onClick={() => confirmDeliver(selected)}>一键投递已选 {selected.length} 个</Button>
           </div>
         </div>

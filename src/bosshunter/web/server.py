@@ -391,6 +391,27 @@ def api_workbench_deliver():
 		return _json_response({"error": str(e)}, 500)
 
 
+@app.route("/api/workbench/reject", method="POST")
+def api_workbench_reject():
+	try:
+		body = request.json or {}
+		job_ids = [str(job_id) for job_id in body.get("job_ids", []) if str(job_id)]
+		if not job_ids:
+			return _json_response({"error": "请选择要放弃的岗位"}, 400)
+
+		db = _get_web_db()
+		try:
+			for job_id in job_ids:
+				update_job_status(db, job_id, "rejected")
+				add_history(db, job_id, "rejected", "Web Dashboard 放弃投递")
+		finally:
+			db.close()
+
+		return _json_response({"success": True, "count": len(job_ids)})
+	except Exception as e:
+		return _json_response({"error": str(e)}, 500)
+
+
 @app.route("/api/jobs/<job_id>")
 def api_job_detail(job_id):
 	db = _get_web_db()

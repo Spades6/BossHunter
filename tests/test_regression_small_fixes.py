@@ -236,6 +236,16 @@ class DashboardPageTests(unittest.TestCase):
         self.assertIn("RefreshCw", self.source)
         self.assertIn("onClick={refresh}", self.source)
 
+    def test_dashboard_exposes_batch_reject_for_selected_pending_jobs(self):
+        # Arrange: DashboardPage source is loaded in setUp.
+
+        # Act / Assert
+        self.assertIn("rejectSelectedJobs", self.source)
+        self.assertIn("/api/workbench/reject", self.source)
+        self.assertIn("放弃已选", self.source)
+        self.assertIn("确定放弃这", self.source)
+        self.assertIn("setSelected(prev => prev.filter", self.source)
+
 
 class SidebarTests(unittest.TestCase):
     def setUp(self):
