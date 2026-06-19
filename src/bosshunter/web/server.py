@@ -16,6 +16,7 @@ from bosshunter import __version__
 from bosshunter.config import load_config, CITY_CODES
 from bosshunter.db import (
 	add_history,
+	get_daily_activity,
 	get_db,
 	get_funnel_stats,
 	get_jobs_needing_resume,
