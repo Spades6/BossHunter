@@ -406,12 +406,6 @@ https://github.com/powerycy/BossHunter
 
 ---
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=powerycy/BossHunter&type=Date)](https://www.star-history.com/#powerycy/BossHunter&Date)
-
----
-
 ## 贡献
 
 欢迎 PR 和 Issue。请注意：
