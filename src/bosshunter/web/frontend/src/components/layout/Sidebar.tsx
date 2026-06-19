@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { BriefcaseBusiness, LayoutDashboard, Radar, Settings } from 'lucide-react'
+import { BriefcaseBusiness, Github, LayoutDashboard, Radar, Settings } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 const navItems = [
@@ -8,6 +8,8 @@ const navItems = [
   { to: '/monitor', icon: Radar, label: '监测执行' },
   { to: '/config', icon: Settings, label: '配置' },
 ]
+
+const GITHUB_URL = 'https://github.com/powerycy/BossHunter'
 
 interface SidebarProps {
   pendingReplies?: number
@@ -48,7 +50,7 @@ export function Sidebar({ pendingReplies: pendingRepliesProp }: SidebarProps) {
           </div>
           <div>
             <div className="font-black text-sm tracking-tight text-foreground">BossHunter</div>
-            <div className="text-[11px] text-muted">AI 求职猎手</div>
+            <div className="text-[11px] text-muted">v2.0 · 本地控制台</div>
           </div>
         </div>
       </div>
@@ -77,8 +79,17 @@ export function Sidebar({ pendingReplies: pendingRepliesProp }: SidebarProps) {
         ))}
       </nav>
 
-      <div className="px-5 py-4 border-t border-card-border">
-        <p className="text-xs text-muted">v2.0 · 本地控制台</p>
+      <div className="px-4 py-4 border-t border-card-border space-y-3">
+        <a
+          href={GITHUB_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-2 rounded-2xl border border-card-border bg-[#FFFCFA] px-3 py-3 text-xs font-black text-foreground transition-colors hover:border-primary/60 hover:text-primary"
+        >
+          <Github className="h-4 w-4" />
+          <span className="text-base leading-none text-yellow-400">★</span> BossHunter
+        </a>
+        <p className="text-center text-[11px] leading-5 text-muted">❤️  欢迎点 Star 支持维护  ❤️</p>
       </div>
     </aside>
   )
