@@ -6,6 +6,11 @@
 
 **BossHunter** 是一个基于 AI + CDP 浏览器自动化的智能求职助手，通过「AI 评分 + 人工确认」策略，帮助求职者更高效地筛选岗位、准备沟通内容并管理投递状态。
 
+> 如果 BossHunter 帮你节省了求职时间，欢迎点一个 Star 支持项目继续维护：  
+> ⭐ https://github.com/powerycy/BossHunter
+>
+> 你的 Star 会帮助项目继续推进招聘平台适配、AI 岗位匹配、Web Dashboard 和本地隐私体验优化。
+
 ---
 
 ## 项目演示
@@ -70,6 +75,33 @@
 > - 作者不对任何直接或间接损失负责。
 > - 请合理设置频率限制，避免对平台造成负担。
 > - 建议仅在个人求职期间短期、低频使用。
+
+---
+
+## 为什么做 BossHunter？
+
+找工作过程中，很多时间都消耗在重复搜索岗位、筛选匹配度、修改招呼语和跟进消息上。
+
+BossHunter 希望把这些重复流程交给 AI 和自动化处理，让求职者把精力放在更重要的事情上：
+
+- 判断机会是否真的适合自己
+- 优化简历和项目经历
+- 准备面试
+- 跟进真正有价值的岗位反馈
+
+BossHunter 不是为了鼓励无脑海投，而是希望帮助你更高效、更有判断力地管理求职流程。
+
+---
+
+## 适合谁使用？
+
+BossHunter 适合这些用户：
+
+- 正在集中投递岗位的求职者
+- 想用 AI 提高简历投递效率的人
+- 想减少重复筛选岗位时间的人
+- 希望本地运行、不想把账号和简历交给第三方平台的人
+- 对 AI Agent、浏览器自动化、求职效率工具感兴趣的开发者
 
 ---
 
@@ -333,6 +365,50 @@ A: 上传 Markdown 格式简历。AI 会根据具体岗位 JD 动态生成定制
 
 ### Q: 为什么需要 Chrome 远程调试？
 A: 项目通过 CDP (Chrome DevTools Protocol) 直连你日常使用的浏览器，天然携带登录态，无需保存招聘平台账号密码。
+
+---
+
+## Roadmap
+
+BossHunter 仍在持续完善中，后续计划包括：
+
+- [ ] 更稳定的招聘平台页面适配
+- [ ] 更智能的岗位匹配评分
+- [ ] 简历与岗位 JD 自动匹配分析
+- [ ] 招呼语风格自定义
+- [ ] 投递记录与结果统计看板
+- [ ] HR 回复监测与提醒
+- [ ] 多模型 AI Provider 支持
+- [ ] 更多招聘平台支持
+- [ ] 更完善的本地隐私保护
+- [ ] 一键安装 / 桌面端体验优化
+
+如果你希望这些能力继续推进，欢迎点一个 Star 支持项目维护：
+
+⭐ https://github.com/powerycy/BossHunter
+
+---
+
+## 支持 BossHunter
+
+BossHunter 是个人维护的开源项目。如果它对你有帮助，欢迎：
+
+- 点 Star 收藏项目
+- 分享给正在找工作的朋友
+- 提 Issue 反馈真实使用问题
+- 参与 Roadmap 讨论
+- 提交 PR 一起完善功能
+
+你的 Star 会帮助项目获得更多曝光，也会让我更有动力继续维护招聘平台适配、AI 匹配能力和 Web Dashboard。
+
+⭐ Star 项目：  
+https://github.com/powerycy/BossHunter
+
+---
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=powerycy/BossHunter&type=Date)](https://www.star-history.com/#powerycy/BossHunter&Date)
 
 ---
 

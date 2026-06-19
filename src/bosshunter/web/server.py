@@ -22,12 +22,41 @@ from bosshunter.db import (
 app = Bottle()
 
 # Paths
-BASE_DIR = Path.cwd()
 FRONTEND_DIR = Path(__file__).parent / "frontend" / "dist"
+SCHEMA_PATH = Path(__file__).parent / "config_schema.json"
+
+
+def _default_base_dir() -> Path:
+	"""Resolve the runtime project directory even when launched outside repo root."""
+	source_root = Path(__file__).resolve().parents[3]
+	if (source_root / "config.yaml").exists():
+		return source_root
+
+	cwd = Path.cwd()
+	if (cwd / "config.yaml").exists():
+		return cwd
+
+	return cwd
+
+
+BASE_DIR = _default_base_dir()
 DATA_DIR = BASE_DIR / "data"
 RESUME_DIR = DATA_DIR / "resumes"
 CONFIG_PATH = BASE_DIR / "config.yaml"
-SCHEMA_PATH = Path(__file__).parent / "config_schema.json"
+
+
+def set_base_dir(base_dir: Path | str) -> None:
+	"""Set the runtime directory used for config.yaml, data, and uploads."""
+	global BASE_DIR, DATA_DIR, RESUME_DIR, CONFIG_PATH
+	BASE_DIR = Path(base_dir).resolve()
+	DATA_DIR = BASE_DIR / "data"
+	RESUME_DIR = DATA_DIR / "resumes"
+	CONFIG_PATH = BASE_DIR / "config.yaml"
+
+
+def _get_web_db():
+	"""Open the dashboard database from the resolved runtime data directory."""
+	return get_db(DATA_DIR / "bosshunter.db")
 
 
 def _json_response(data, status_code=200):
@@ -105,7 +134,7 @@ def health():
 
 @app.route("/api/funnel")
 def api_funnel():
-	db = get_db()
+	db = _get_web_db()
 	try:
 		data = get_funnel_stats(db)
 		return _json_response(data)
@@ -115,7 +144,7 @@ def api_funnel():
 
 @app.route("/api/stats")
 def api_stats():
-	db = get_db()
+	db = _get_web_db()
 	try:
 		data = get_stats(db)
 		return _json_response(data)
@@ -126,7 +155,7 @@ def api_stats():
 @app.route("/api/activity")
 def api_activity():
 	days = int(request.params.get("days", 7))
-	db = get_db()
+	db = _get_web_db()
 	try:
 		data = get_daily_activity(db, days)
 		return _json_response(data)
@@ -140,7 +169,7 @@ def api_jobs():
 	limit = int(request.params.get("limit", 100))
 	offset = int(request.params.get("offset", 0))
 
-	db = get_db()
+	db = _get_web_db()
 	try:
 		query = "SELECT * FROM jobs"
 		params = []
@@ -160,7 +189,7 @@ def api_jobs():
 @app.route("/api/top-companies")
 def api_top_companies():
 	limit = int(request.params.get("limit", 5))
-	db = get_db()
+	db = _get_web_db()
 	try:
 		data = get_top_companies(db, limit)
 		return _json_response(data)
@@ -171,7 +200,7 @@ def api_top_companies():
 @app.route("/api/history")
 def api_history():
 	limit = int(request.params.get("limit", 15))
-	db = get_db()
+	db = _get_web_db()
 	try:
 		data = get_recent_history(db, limit)
 		return _json_response(data)
