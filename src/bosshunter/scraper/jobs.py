@@ -129,10 +129,11 @@ def _generate_job_id(url: str) -> str:
     return hashlib.md5(url.encode()).hexdigest()[:16]
 
 
-def scrape_jobs(config: dict, keywords: list[str], limit: int = 200) -> int:
+def scrape_jobs(config: dict, keywords: list[str], limit: int | None = None) -> int:
     """Scrape jobs from BOSS直聘 and store in database.
 
     Supports multi-keyword × multi-city combinations with pagination.
+    When limit is None, collection is bounded only by city × keyword × max_pages.
     Returns the number of new jobs added.
     """
     db = get_db()
@@ -172,7 +173,7 @@ def scrape_jobs(config: dict, keywords: list[str], limit: int = 200) -> int:
         console=console
     ) as progress:
         for city, city_code, keyword in search_combos:
-            if new_count >= limit:
+            if limit is not None and new_count >= limit:
                 break
 
             label = f"{city}/{keyword}" if len(cities) > 1 else keyword
@@ -180,7 +181,7 @@ def scrape_jobs(config: dict, keywords: list[str], limit: int = 200) -> int:
             keyword_new = 0
 
             for page in range(1, max_pages + 1):
-                if new_count >= limit:
+                if limit is not None and new_count >= limit:
                     break
 
                 # Build paginated URL
@@ -229,7 +230,7 @@ def scrape_jobs(config: dict, keywords: list[str], limit: int = 200) -> int:
 
                 # Process each job
                 for job_data in jobs_list:
-                    if new_count >= limit:
+                    if limit is not None and new_count >= limit:
                         break
 
                     job_url = job_data.get("url", "")

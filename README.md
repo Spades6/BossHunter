@@ -247,8 +247,8 @@ bosshunter run
 ### 分步执行
 
 ```bash
-bosshunter scrape -k "Python开发" -l 30   # 采集
-bosshunter score                            # AI 评分
+bosshunter scrape -k "Python开发"         # 采集
+bosshunter score                          # AI 评分
 bosshunter confirm                          # 人工确认
 bosshunter greet                            # 生成招呼语
 bosshunter send                             # 发送已生成的招呼语

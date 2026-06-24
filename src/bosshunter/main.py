@@ -118,9 +118,9 @@ def connect(ctx: click.Context) -> None:
 
 @cli.command()
 @click.option("--keyword", "-k", default=None, help="搜索关键词（覆盖配置文件）")
-@click.option("--limit", "-l", default=30, help="最多抓取岗位数")
+@click.option("--limit", "-l", default=None, type=int, help="最多抓取岗位数（默认不限制）")
 @click.pass_context
-def scrape(ctx: click.Context, keyword: str | None, limit: int) -> None:
+def scrape(ctx: click.Context, keyword: str | None, limit: int | None) -> None:
     """采集岗位信息"""
     from bosshunter.scraper.jobs import scrape_jobs
 
