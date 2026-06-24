@@ -170,7 +170,7 @@ def _execute_collect(task: WorkbenchTask, config: dict) -> None:
 
 	keywords = config.get("search", {}).get("keywords", [])
 	_log(task, "开始采集岗位")
-	scrape_jobs(config, keywords, limit=30)
+	scrape_jobs(config, keywords)
 	if task.stop_requested.is_set():
 		return
 	_log(task, "开始 AI 评分")
