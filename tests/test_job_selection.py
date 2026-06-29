@@ -15,6 +15,7 @@ from bosshunter.db import (
     update_job_status,
 )
 from bosshunter.executor.sender import send_greetings
+from bosshunter.executor.sender import _send_greeting_once
 
 
 def _job(job_id: str, title: str = "Engineer") -> dict:
@@ -36,6 +37,27 @@ def _job(job_id: str, title: str = "Engineer") -> dict:
 
 
 class JobSelectionTests(unittest.TestCase):
+    def test_send_greeting_reports_unavailable_job_page_before_clicking_chat(self):
+        job = {
+            "id": "gone",
+            "url": "https://www.zhipin.com/job_detail/gone.html",
+        }
+
+        with patch("bosshunter.executor.sender.new_tab", return_value="target-1"), \
+             patch("bosshunter.executor.sender.evaluate", return_value='{"success": false, "error": "job_page_unavailable", "history_detail": "岗位页面不存在或已下架", "skip_backoff": true}'), \
+             patch("bosshunter.executor.sender.close_tab") as close_tab, \
+             patch("bosshunter.executor.sender.time.sleep"):
+            result, target_id = _send_greeting_once(
+                job,
+                "您好，我对这个岗位很感兴趣。",
+                {"browse_before_greet": False},
+            )
+
+        self.assertIsNone(target_id)
+        self.assertEqual(result["error"], "job_page_unavailable")
+        self.assertEqual(result["history_detail"], "岗位页面不存在或已下架")
+        close_tab.assert_called_once_with("target-1")
+
     def test_pending_confirmation_excludes_jobs_with_greetings(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = get_db(Path(tmp) / "bosshunter.db")

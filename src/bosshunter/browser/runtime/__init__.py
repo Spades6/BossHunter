@@ -86,7 +86,7 @@ def check_node_available() -> dict[str, Any]:
 def runtime_health(config: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Return `/health` JSON when the runtime responds."""
     try:
-        response = httpx.get(f"{get_runtime_url(config)}/health", timeout=3)
+        response = httpx.get(f"{get_runtime_url(config)}/health", timeout=3, trust_env=False)
         if response.status_code == 200:
             return response.json()
     except (httpx.HTTPError, ValueError):
@@ -105,7 +105,7 @@ def runtime_targets(config: dict[str, Any] | None = None) -> list[dict[str, Any]
     if not is_bosshunter_runtime(config):
         return None
     try:
-        response = httpx.get(f"{get_runtime_url(config)}/targets", timeout=5)
+        response = httpx.get(f"{get_runtime_url(config)}/targets", timeout=5, trust_env=False)
         if response.status_code == 200:
             data = response.json()
             if isinstance(data, list):

@@ -91,7 +91,7 @@ class ConfigValidationTests(unittest.TestCase):
             config_path = Path(tmp) / "config.yaml"
             config_path.write_text("ai:\n  provider: openai\n", encoding="utf-8")
 
-            with self.assertRaisesRegex(ValueError, "仅支持 Anthropic|ai.provider: anthropic"):
+            with self.assertRaisesRegex(ValueError, "Anthropic 或 OpenAI 兼容接口"):
                 load_config(config_path)
 
     def test_load_config_defaults_to_not_allowing_internships(self):
@@ -255,6 +255,16 @@ class DashboardPageTests(unittest.TestCase):
         self.assertIn("已直接进入发送流程", self.source)
         self.assertNotIn("confirmDeliver(pendingGreetingJobs.map", self.source)
         self.assertNotIn("confirmDeliver([job.id])}>发送招呼语", self.source)
+
+    def test_dashboard_send_errors_do_not_fake_an_active_full_task(self):
+        # Arrange: DashboardPage source is loaded in setUp.
+
+        # Act / Assert
+        self.assertNotIn("blockedFullTask", self.source)
+        self.assertNotIn("send-errors-blocked-full-flow", self.source)
+        self.assertNotIn("全流程卡在打招呼环节", self.source)
+        self.assertIn("放弃已失效岗位", self.source)
+        self.assertIn("放弃全部", self.source)
 
 
 class SidebarTests(unittest.TestCase):

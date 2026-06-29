@@ -74,12 +74,15 @@ def resolve_anthropic_model(model: str, config: dict) -> str:
 
 def call_anthropic_text(prompt: str, config: dict, max_tokens: int) -> str | None:
     """Call Anthropic-compatible Messages API and return the first text block."""
+    ai_cfg = config.get("ai", {}) if isinstance(config, dict) else {}
+    if ai_cfg.get("provider") == "openai_compatible":
+        return call_openai_compatible_text(prompt, config, max_tokens)
+
     try:
         import anthropic
     except ImportError:
         return None
 
-    ai_cfg = config.get("ai", {}) if isinstance(config, dict) else {}
     if not get_anthropic_api_key(config):
         return None
 
@@ -95,6 +98,37 @@ def call_anthropic_text(prompt: str, config: dict, max_tokens: int) -> str | Non
         if text is not None:
             return text.strip()
     return None
+
+
+def call_openai_compatible_text(prompt: str, config: dict, max_tokens: int) -> str | None:
+    """Call an OpenAI-compatible chat completions endpoint."""
+    ai_cfg = config.get("ai", {}) if isinstance(config, dict) else {}
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or ai_cfg.get("api_key")
+    base_url = os.environ.get("OPENAI_BASE_URL") or os.environ.get("ANTHROPIC_BASE_URL") or ai_cfg.get("base_url")
+    model = ai_cfg.get("model", "deepseek-chat")
+    if not api_key or not base_url:
+        return None
+
+    try:
+        response = httpx.post(
+            f"{base_url.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "temperature": 0.2,
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        choices = response.json().get("choices", [])
+        if not choices:
+            return None
+        content = choices[0].get("message", {}).get("content")
+        return content.strip() if isinstance(content, str) else None
+    except Exception:
+        return None
 
 
 def _match_model_name(requested: str, available: list[str]) -> str | None:

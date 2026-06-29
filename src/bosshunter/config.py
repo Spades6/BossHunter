@@ -31,7 +31,7 @@ CITY_CODES: dict[str, str] = {
 }
 
 
-SUPPORTED_AI_PROVIDERS = {"anthropic"}
+SUPPORTED_AI_PROVIDERS = {"anthropic", "openai_compatible"}
 
 
 DEFAULTS: dict[str, Any] = {
@@ -113,7 +113,7 @@ def _validate_ai_provider(config: dict[str, Any]) -> None:
     """Fail fast when the configured AI provider is not supported."""
     provider = config.get("ai", {}).get("provider", "anthropic")
     if provider not in SUPPORTED_AI_PROVIDERS:
-        raise ValueError("当前版本仅支持 Anthropic，请设置 ai.provider: anthropic。")
+        raise ValueError("当前版本支持 Anthropic 或 OpenAI 兼容接口。")
 
 
 def _deep_copy_dict(d: dict) -> dict:

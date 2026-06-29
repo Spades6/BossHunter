@@ -111,17 +111,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
     () => workbench.pending_greetings.filter(job => !confirmedDeliveryIds.has(job.id)),
     [workbench.pending_greetings, confirmedDeliveryIds]
   )
-  const blockedFullTask: WorkbenchTask | null = !workbench.task && workbench.send_errors.length > 0
-    ? {
-        id: 'send-errors-blocked-full-flow',
-        mode: 'full',
-        label: '运行全流程',
-        status: 'running',
-        logs: ['发送失败待处理'],
-        stop_requested: false,
-      }
-    : null
-  const activeTask = workbench.task || blockedFullTask
+  const activeTask = workbench.task
   const visibleTask = activeTask || workbench.last_task
   const pendingReplies = history.filter(item => item.action === 'reply_pending')
 
@@ -144,10 +134,6 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
     if (modePending) return
     try {
       if (activeTask?.mode === mode) {
-        if (blockedFullTask) {
-          setNotice('全流程卡在打招呼环节，请先处理下方发送失败待处理。')
-          return
-        }
         if (window.confirm(`是否停止当前${activeTask.label}任务？已入库岗位会保留。`)) {
           setModePending(mode)
           setNotice(`正在停止${activeTask.label}...`)
@@ -406,9 +392,12 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
           <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
             <div>
               <h3 className="text-lg font-black text-danger">发送失败待处理</h3>
-              <p className="mt-1 text-xs text-danger/80">这些岗位已生成招呼语，但没有成功发送。处理后才会进入监测环节。</p>
+              <p className="mt-1 text-xs text-danger/80">这些岗位已生成招呼语，但没有成功发送。你可以重试，或放弃已失效岗位。</p>
             </div>
-            <Button size="sm" onClick={() => confirmDeliver(workbench.send_errors.map(job => job.id))}>重新发送全部 {workbench.send_errors.length} 个</Button>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => confirmDeliver(workbench.send_errors.map(job => job.id))}>重新发送全部 {workbench.send_errors.length} 个</Button>
+              <Button variant="secondary" size="sm" onClick={() => rejectSelectedJobs(workbench.send_errors.map(job => job.id))}>放弃全部</Button>
+            </div>
           </div>
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {workbench.send_errors.map(job => (
@@ -423,6 +412,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
                 <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted">{job.greeting || '招呼语已生成，等待重新发送。'}</p>
                 <div className="mt-3 flex gap-2">
                   <Button size="sm" onClick={() => sendReadyGreetings([job.id])}>重新发送</Button>
+                  <Button variant="secondary" size="sm" onClick={() => rejectSelectedJobs([job.id])}>放弃</Button>
                   <Button variant="secondary" size="sm" onClick={() => openJobDetail(job)}><Eye className="mr-2 h-4 w-4" />查看详情</Button>
                   <Button variant="secondary" size="sm" disabled={!job.url} onClick={() => window.open(job.url, '_blank', 'noopener,noreferrer')}><ExternalLink className="mr-2 h-4 w-4" />跳转岗位链接</Button>
                 </div>

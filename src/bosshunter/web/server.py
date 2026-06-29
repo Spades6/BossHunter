@@ -6,6 +6,7 @@ Serves:
 """
 
 import json
+import os
 import time
 from copy import deepcopy
 from pathlib import Path
@@ -115,7 +116,10 @@ def _sanitize_config_for_write(data):
 	ai_cfg.pop("has_auth_token", None)
 
 	existing_ai = load_config(CONFIG_PATH).get("ai", {})
-	ai_cfg["provider"] = "anthropic"
+	provider = ai_cfg.get("provider") or existing_ai.get("provider") or "anthropic"
+	if provider not in {"anthropic", "openai_compatible"}:
+		provider = "anthropic"
+	ai_cfg["provider"] = provider
 
 	for field in ("api_key", "auth_token"):
 		posted_value = ai_cfg.get(field)
@@ -149,6 +153,17 @@ def _preflight_messages(mode: str, config: dict) -> list[str]:
 
 	if mode in {"full", "collect"} and not config.get("search", {}).get("keywords"):
 		messages.append("请先在配置页填写搜索关键词。")
+
+	if mode in {"full", "collect"}:
+		ai_cfg = config.get("ai", {}) if isinstance(config.get("ai"), dict) else {}
+		has_ai_key = bool(
+			os.environ.get("ANTHROPIC_API_KEY")
+			or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+			or ai_cfg.get("api_key")
+			or ai_cfg.get("auth_token")
+		)
+		if not has_ai_key:
+			messages.append("请先在配置页填写 AI API Key，或设置 ANTHROPIC_API_KEY 环境变量。")
 
 	return messages
 
@@ -196,6 +211,20 @@ def _execute_full(task: WorkbenchTask, config: dict) -> None:
 	if task.stop_requested.is_set():
 		return
 
+	db = _get_web_db()
+	try:
+		threshold = int(config.get("scoring", {}).get("threshold", 60) or 60)
+		pending_confirmation = [
+			job for job in get_jobs_pending_confirmation(db)
+			if int(job.get("score") or 0) >= threshold
+		]
+	finally:
+		db.close()
+	if not pending_confirmation:
+		task.context["waiting_confirmation"] = False
+		_log(task, "没有待确认岗位，流程结束")
+		return
+
 	confirmation_event = Event()
 	task.context["waiting_confirmation"] = True
 	task.context["confirmation_event"] = confirmation_event
@@ -224,6 +253,8 @@ def _execute_deliver(task: WorkbenchTask, config: dict) -> None:
 	from bosshunter.ai.greeter import generate_greetings
 	from bosshunter.executor.sender import send_greetings
 
+	config = dict(config)
+	config["_workbench_stop_event"] = task.stop_requested
 	if not config.get("_workbench_skip_greeting"):
 		_log(task, "生成招呼语")
 		generate_greetings(config)

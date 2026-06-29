@@ -100,6 +100,7 @@ class WebApiRouteTests(unittest.TestCase):
                     {
                         "profile": {"resume_path": str(resume_path)},
                         "search": {"keywords": ["AI产品经理"]},
+                        "ai": {"api_key": "test-api-key"},
                     },
                     allow_unicode=True,
                     sort_keys=False,
@@ -115,6 +116,36 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertTrue(status.startswith("200"))
         self.assertIn("application/json", headers["Content-Type"])
         self.assertEqual(json.loads(body), {"ok": True, "messages": []})
+
+    def test_web_api_workbench_preflight_full_requires_ai_key(self):
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            resume_path = base_dir / "resume.md"
+            resume_path.write_text("# Resume", encoding="utf-8")
+            (base_dir / "config.yaml").write_text(
+                yaml.dump(
+                    {
+                        "profile": {"resume_path": str(resume_path)},
+                        "search": {"keywords": ["AI产品经理"]},
+                    },
+                    allow_unicode=True,
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            server.set_base_dir(base_dir)
+
+            # Act
+            with patch.dict("os.environ", {}, clear=True):
+                status, headers, body = self._request("/api/workbench/preflight?mode=full")
+
+        # Assert
+        self.assertTrue(status.startswith("200"))
+        self.assertIn("application/json", headers["Content-Type"])
+        payload = json.loads(body)
+        self.assertFalse(payload["ok"])
+        self.assertIn("请先在配置页填写 AI API Key，或设置 ANTHROPIC_API_KEY 环境变量。", payload["messages"])
 
     def test_web_api_activity_returns_json_without_runtime_name_error(self):
         # Arrange
@@ -163,20 +194,31 @@ class WebApiRouteTests(unittest.TestCase):
         runner._executors["full"] = lambda task, config: server._execute_full(task, config)
 
         # Act
-        with patch.object(server, "_execute_collect", side_effect=fake_collect):
-            task = runner.start("full", {})
-            for _ in range(20):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("ready-job"))
+                update_job_score(db, "ready-job", 82, "good match")
+                update_job_status(db, "ready-job", "ready")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            with patch.object(server, "_execute_collect", side_effect=fake_collect):
+                task = runner.start("full", {})
+                for _ in range(20):
+                    status = runner.status()
+                    active = status["active"]
+                    if active and "等待前端确认投递" in active["logs"]:
+                        break
+                    time.sleep(0.01)
+                time.sleep(0.05)
                 status = runner.status()
                 active = status["active"]
-                if active and "等待前端确认投递" in active["logs"]:
-                    break
-                time.sleep(0.01)
-            time.sleep(0.05)
-            status = runner.status()
-            active = status["active"]
-            if active:
-                runner._tasks[task["id"]].stop_requested.set()
-                runner.wait(timeout=1)
+                if active:
+                    runner._tasks[task["id"]].stop_requested.set()
+                    runner.wait(timeout=1)
 
         # Assert
         self.assertTrue(confirmation_reached)
@@ -184,6 +226,63 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertEqual(active["id"], task["id"])
         self.assertEqual(active["status"], "running")
         self.assertIn("等待前端确认投递", active["logs"])
+
+    def test_task_stop_releases_active_slot_before_executor_returns(self):
+        # Arrange
+        started = Event()
+        release = Event()
+
+        def blocking_executor(task, config):
+            started.set()
+            release.wait(timeout=1)
+
+        runner = WorkbenchTaskRunner({
+            "collect": blocking_executor,
+            "monitor": lambda task, config: None,
+        })
+        task = runner.start("collect", {})
+        self.assertTrue(started.wait(timeout=1))
+
+        try:
+            # Act
+            stopped = runner.stop(task["id"])
+            status_after_stop = runner.status()
+            second_task = runner.start("monitor", {})
+            runner.wait(timeout=1)
+        finally:
+            release.set()
+            runner.wait(timeout=1)
+
+        # Assert
+        self.assertEqual(stopped["status"], "stopping")
+        self.assertIsNone(status_after_stop["active"])
+        self.assertEqual(second_task["mode"], "monitor")
+
+    def test_web_api_full_task_completes_when_no_jobs_need_confirmation(self):
+        # Arrange
+        calls = []
+
+        def fake_collect(task, config):
+            calls.append("collect")
+
+        runner = WorkbenchTaskRunner()
+        runner._executors["full"] = lambda task, config: server._execute_full(task, config)
+
+        # Act
+        with tempfile.TemporaryDirectory() as tmp:
+            server.set_base_dir(Path(tmp))
+            with patch.object(server, "_execute_collect", side_effect=fake_collect):
+                task = runner.start("full", {})
+                runner.wait(timeout=1)
+                status = runner.status()
+                last_task = status["last_task"]
+
+        # Assert
+        self.assertEqual(calls, ["collect"])
+        self.assertIsNone(status["active"])
+        self.assertEqual(last_task["id"], task["id"])
+        self.assertEqual(last_task["status"], "completed")
+        self.assertIn("没有待确认岗位，流程结束", last_task["logs"])
 
     def test_web_api_deliver_hands_selected_jobs_to_waiting_full_task(self):
         # Arrange
@@ -323,19 +422,30 @@ class WebApiRouteTests(unittest.TestCase):
         runner._executors["full"] = lambda task, config: server._execute_full(task, config)
 
         # Act
-        with patch.object(server, "_execute_collect", side_effect=fake_collect), \
-             patch.object(server, "_execute_deliver", side_effect=fake_deliver), \
-             patch.object(server, "_execute_monitor", side_effect=fake_monitor):
-            task = runner.start("full", {})
-            for _ in range(50):
-                running_task = runner._tasks[task["id"]]
-                confirmation_event = running_task.context.get("confirmation_event")
-                if isinstance(confirmation_event, Event):
-                    running_task.context["confirmed_job_ids"] = ["ready-a", "ready-b"]
-                    confirmation_event.set()
-                    break
-                time.sleep(0.01)
-            runner.wait(timeout=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("ready-a"))
+                update_job_score(db, "ready-a", 88, "good match")
+                update_job_status(db, "ready-a", "ready")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            with patch.object(server, "_execute_collect", side_effect=fake_collect), \
+                 patch.object(server, "_execute_deliver", side_effect=fake_deliver), \
+                 patch.object(server, "_execute_monitor", side_effect=fake_monitor):
+                task = runner.start("full", {})
+                for _ in range(50):
+                    running_task = runner._tasks[task["id"]]
+                    confirmation_event = running_task.context.get("confirmation_event")
+                    if isinstance(confirmation_event, Event):
+                        running_task.context["confirmed_job_ids"] = ["ready-a", "ready-b"]
+                        confirmation_event.set()
+                        break
+                    time.sleep(0.01)
+                runner.wait(timeout=1)
 
         # Assert
         self.assertEqual(calls, ["collect", ("deliver", ["ready-a", "ready-b"]), "monitor"])

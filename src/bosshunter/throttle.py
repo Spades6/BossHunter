@@ -4,6 +4,7 @@ import random
 import time
 from collections import deque
 from datetime import datetime
+from threading import Event
 
 
 class RequestThrottle:
@@ -15,7 +16,7 @@ class RequestThrottle:
         self._last_request_time = 0.0
         self._recent_times: deque[float] = deque(maxlen=12)
 
-    def wait(self) -> None:
+    def wait(self, stop_event: Event | None = None) -> bool:
         """Block until it's safe to send the next request."""
         elapsed = time.time() - self._last_request_time
         mean = (self._delay_min + self._delay_max) / 2
@@ -29,7 +30,11 @@ class RequestThrottle:
         burst = self._burst_penalty()
         total = max(0, base_sleep + burst)
         if total > 0:
-            time.sleep(total)
+            if stop_event and stop_event.wait(total):
+                return True
+            if not stop_event:
+                time.sleep(total)
+        return bool(stop_event and stop_event.is_set())
 
     def mark(self) -> None:
         """Record that a request was just sent."""

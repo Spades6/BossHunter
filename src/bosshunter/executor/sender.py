@@ -2,6 +2,7 @@
 
 import time
 import json
+from threading import Event
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
@@ -21,6 +22,17 @@ def _parse_js_result(result) -> dict:
         return json.loads(result)
     except (json.JSONDecodeError, TypeError):
         return {"success": False, "error": "parse_error"}
+
+
+def _stop_requested(stop_event) -> bool:
+    return bool(stop_event and stop_event.is_set())
+
+
+def _sleep_or_stop(seconds: float, stop_event) -> bool:
+    if stop_event:
+        return bool(stop_event.wait(seconds))
+    time.sleep(seconds)
+    return False
 
 
 # JS: 在岗位详情页点击"立即沟通"并发送招呼语
@@ -62,20 +74,55 @@ JS_SEND_GREETING = """
 
 
 def _send_greeting_once(job: dict, greeting: str, throttle_config: dict) -> tuple[dict, str | None]:
+    stop_event = throttle_config.get("_workbench_stop_event")
     target_id = new_tab(job["url"])
     if not target_id:
         return {"success": False, "error": "open_page_failed", "history_detail": "无法打开页面", "skip_backoff": True}, None
+
+    if _stop_requested(stop_event):
+        close_tab(target_id)
+        return {"success": False, "error": "stopped", "history_detail": "用户已请求停止", "skip_backoff": True}, None
 
     browse_min = throttle_config.get("browse_duration_min", 15)
     browse_max = throttle_config.get("browse_duration_max", 30)
     if throttle_config.get("browse_before_greet", True):
         import random
         browse_time = random.uniform(browse_min, browse_max)
-        time.sleep(browse_time)
+        if _sleep_or_stop(browse_time, stop_event):
+            close_tab(target_id)
+            return {"success": False, "error": "stopped", "history_detail": "用户已请求停止", "skip_backoff": True}, None
+
+    page_check_js = """
+    (() => {
+        const text = document.body ? document.body.innerText : '';
+        const title = document.title || '';
+        if (
+            title.includes('访问的页面不存在') ||
+            text.includes('您访问的页面不存在') ||
+            text.includes('Oops!')
+        ) {
+            return JSON.stringify({
+                success: false,
+                error: 'job_page_unavailable',
+                history_detail: '岗位页面不存在或已下架',
+                skip_backoff: true
+            });
+        }
+        return JSON.stringify({success: true});
+    })()
+    """
+    page_check = _parse_js_result(evaluate(target_id, page_check_js))
+    if not page_check.get("success"):
+        close_tab(target_id)
+        return page_check, None
 
     click_chat_js = """
     (() => {
-        const btn = document.querySelector('[ka*="chat"], .btn-startchat, .op-btn-chat');
+        const candidates = Array.from(document.querySelectorAll('[ka="job_detail_chat"], .btn-startchat, .op-btn-chat'));
+        const btn = candidates.find((el) => {
+            const text = (el.innerText || el.textContent || '').trim();
+            return text.includes('沟通') || el.getAttribute('ka') === 'job_detail_chat';
+        });
         if (!btn) return JSON.stringify({success: false, error: 'no_chat_button'});
         btn.click();
         return JSON.stringify({success: true});
@@ -86,7 +133,9 @@ def _send_greeting_once(job: dict, greeting: str, throttle_config: dict) -> tupl
         close_tab(target_id)
         return {"success": False, "error": "no_chat_button", "history_detail": "无法找到沟通按钮", "skip_backoff": True}, None
 
-    time.sleep(4)
+    if _sleep_or_stop(4, stop_event):
+        close_tab(target_id)
+        return {"success": False, "error": "stopped", "history_detail": "用户已请求停止", "skip_backoff": True}, None
 
     click_confirm_js = """
     (() => {
@@ -101,7 +150,9 @@ def _send_greeting_once(job: dict, greeting: str, throttle_config: dict) -> tupl
     evaluate(target_id, click_confirm_js)
 
     for _ in range(20):
-        time.sleep(0.5)
+        if _sleep_or_stop(0.5, stop_event):
+            close_tab(target_id)
+            return {"success": False, "error": "stopped", "history_detail": "用户已请求停止", "skip_backoff": True}, None
         url_now = evaluate(target_id, "location.pathname")
         if url_now and "/web/geek/chat" in url_now:
             break
@@ -137,6 +188,10 @@ def send_greetings(config: dict, force: bool = False) -> int:
     """Send generated greetings. Returns count of successfully sent."""
     db = get_db()
     throttle_config = config.get("throttle", {})
+    stop_event = config.get("_workbench_stop_event")
+    if isinstance(stop_event, Event):
+        throttle_config = dict(throttle_config)
+        throttle_config["_workbench_stop_event"] = stop_event
 
     # Anti-ban: random day off (可通过 --force 跳过)
     day_off_prob = throttle_config.get("day_off_probability", 0.05)
@@ -201,6 +256,10 @@ def send_greetings(config: dict, force: bool = False) -> int:
         task = progress.add_task("发送中", total=len(jobs_to_send))
 
         for job in jobs_to_send:
+            if _stop_requested(stop_event):
+                console.print("[yellow]已请求停止，结束发送[/yellow]")
+                break
+
             greeting = job.get("greeting", "")
             if not greeting:
                 update_job_status(db, job["id"], "error")
@@ -210,15 +269,21 @@ def send_greetings(config: dict, force: bool = False) -> int:
             # Wait between sends (except first)
             if sent_count > 0:
                 progress.update(task, description="等待间隔...")
-                throttle.wait()
+                if throttle.wait(stop_event):
+                    console.print("[yellow]已请求停止，结束发送[/yellow]")
+                    break
 
             progress.update(task, description=f"发送: {job['company'][:10]} - {job['title'][:15]}")
 
             result_data, failed_target_id = _send_greeting_once(job, greeting, throttle_config)
+            if result_data.get("error") == "stopped":
+                break
             if result_data.get("error") == "no_chat_input" and failed_target_id:
                 console.print("[yellow]    ! 未进入具体聊天会话，重新打开岗位页再试一次[/yellow]")
                 close_tab(failed_target_id)
                 result_data, failed_target_id = _send_greeting_once(job, greeting, throttle_config)
+                if result_data.get("error") == "stopped":
+                    break
 
             if not result_data.get("success"):
                 console.print(f"[yellow]    ! 发送失败，保留页面便于排查: {result_data.get('error', 'unknown')}[/yellow]")
@@ -256,7 +321,8 @@ def send_greetings(config: dict, force: bool = False) -> int:
                     break
                 elif pause_duration > 0:
                     console.print(f"\n[yellow]  错误退避: 额外等待 {int(pause_duration)}秒[/yellow]")
-                    time.sleep(pause_duration)
+                    if _sleep_or_stop(pause_duration, stop_event):
+                        break
 
             progress.update(task, advance=1)
 
