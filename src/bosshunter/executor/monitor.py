@@ -886,7 +886,7 @@ def _check_follow_ups(config: dict, throttle, replied_job_ids: set | None = None
     from datetime import datetime, timedelta
 
     follow_up_cfg = config.get("follow_up", {})
-    if not follow_up_cfg.get("enabled", True):
+    if not follow_up_cfg.get("enabled", False):
         return 0
 
     # Skip weekends if configured

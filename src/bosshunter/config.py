@@ -77,7 +77,7 @@ DEFAULTS: dict[str, Any] = {
         "auto_reply_hr_questions": False,
     },
     "follow_up": {
-        "enabled": True,
+        "enabled": False,
         "interval_hours": 48,
         "skip_weekends": True,
     },

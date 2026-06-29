@@ -54,7 +54,7 @@ monitor:
   auto_reply_hr_questions: false
 
 follow_up:
-  enabled: true
+  enabled: false
   interval_hours: 30
   skip_weekends: true
 

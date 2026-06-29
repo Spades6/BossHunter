@@ -77,6 +77,11 @@ class ConfigExampleTests(unittest.TestCase):
 
         self.assertIs(config["profile"]["allow_internship"], False)
 
+    def test_example_defaults_to_disabled_follow_up(self):
+        config = yaml.safe_load((ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+
+        self.assertIs(config["follow_up"]["enabled"], False)
+
     def test_example_does_not_include_prefilter_threshold(self):
         config = yaml.safe_load((ROOT / "config.example.yaml").read_text(encoding="utf-8"))
 
@@ -105,6 +110,26 @@ class ConfigValidationTests(unittest.TestCase):
 
         self.assertIs(config["profile"]["allow_internship"], False)
         self.assertNotIn("prefilter_threshold", config["scoring"])
+
+    def test_load_config_defaults_to_disabled_follow_up(self):
+        from bosshunter.config import load_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.yaml"
+            config_path.write_text("profile:\n  salary_min: 10\n", encoding="utf-8")
+
+            config = load_config(config_path)
+
+        self.assertIs(config["follow_up"]["enabled"], False)
+
+    def test_monitor_does_not_follow_up_when_setting_is_missing(self):
+        from bosshunter.executor import monitor
+
+        with patch.object(monitor, "get_db") as get_db:
+            result = monitor._check_follow_ups({"follow_up": {}}, Mock())
+
+        self.assertEqual(result, 0)
+        get_db.assert_not_called()
 
 
 class PrefilterHardGateTests(unittest.TestCase):
@@ -359,6 +384,9 @@ class ConfigPageTests(unittest.TestCase):
         self.assertIn("请确认后端服务已启动", self.source)
         self.assertIn("error", self.source)
 
+    def test_follow_up_switch_defaults_to_off_when_config_field_is_missing(self):
+        self.assertIn("config.follow_up?.enabled ?? false", self.source)
+
 
 class ConfigSchemaTests(unittest.TestCase):
     def setUp(self):
@@ -383,6 +411,14 @@ class ConfigSchemaTests(unittest.TestCase):
         self.assertEqual(allow_field["label"], "接受实习/管培岗位")
         self.assertEqual(allow_field["type"], "switch")
         self.assertIs(allow_field["default"], False)
+
+    def test_schema_defaults_to_disabled_follow_up(self):
+        follow_up = next(section for section in self.schema["sections"] if section["key"] == "follow_up")
+        enabled = next(field for field in follow_up["fields"] if field["key"] == "enabled")
+
+        self.assertEqual(enabled["label"], "启用自动跟进")
+        self.assertEqual(enabled["type"], "switch")
+        self.assertIs(enabled["default"], False)
 
 
 class ScorerPrefilterTests(unittest.TestCase):
