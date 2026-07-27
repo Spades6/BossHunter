@@ -256,10 +256,64 @@ def get_recent_history(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
         SELECT h.id, h.job_id, h.action, h.detail, h.created_at, j.company, j.title
         FROM history h
         JOIN jobs j ON h.job_id = j.id
-        ORDER BY h.created_at DESC
+        ORDER BY h.created_at DESC, h.id DESC
         LIMIT ?
     """, (limit,)).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_unresolved_resume_failures(conn: sqlite3.Connection) -> list[dict]:
+    """Get the latest resume generation failure for jobs not resolved by a later success."""
+    rows = conn.execute("""
+        SELECT h.id, h.job_id, h.action, h.detail, h.created_at, j.company, j.title
+        FROM history h
+        JOIN jobs j ON h.job_id = j.id
+        WHERE h.action = 'resume_failed'
+          AND h.id = (
+            SELECT MAX(f.id)
+            FROM history f
+            WHERE f.job_id = h.job_id
+              AND f.action = 'resume_failed'
+          )
+          AND (j.resume_path IS NULL OR TRIM(j.resume_path) = '')
+          AND NOT EXISTS (
+            SELECT 1
+            FROM history r
+            WHERE r.job_id = h.job_id
+              AND r.action IN ('needs_resume', 'resume_sent')
+              AND r.id > h.id
+          )
+        ORDER BY h.created_at DESC, h.id DESC
+    """).fetchall()
+    return [dict(row) for row in rows]
+
+
+def count_unresolved_reply_pending(conn: sqlite3.Connection) -> int:
+    """Count latest reply_pending rows that have not been resolved for each job."""
+    row = conn.execute("""
+        SELECT COUNT(*) AS cnt
+        FROM history h
+        WHERE h.action = 'reply_pending'
+          AND h.id = (
+            SELECT MAX(p.id)
+            FROM history p
+            WHERE p.job_id = h.job_id
+              AND p.action = 'reply_pending'
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM history r
+            WHERE r.job_id = h.job_id
+              AND r.action IN ('reply_dismissed', 'replied', 'auto_replied')
+              AND r.id > h.id
+          )
+    """).fetchone()
+    return int(row["cnt"] or 0)
+
+
+def count_unresolved_monitor_items(conn: sqlite3.Connection) -> int:
+    """Count unresolved reply suggestions and resume generation failures."""
+    return count_unresolved_reply_pending(conn) + len(get_unresolved_resume_failures(conn))
 
 
 def get_jobs_needing_resume(conn: sqlite3.Connection) -> list[dict]:

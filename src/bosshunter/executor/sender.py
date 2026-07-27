@@ -6,11 +6,106 @@ from threading import Event
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
-from bosshunter.browser import new_tab, close_tab, evaluate
+from bosshunter.browser import new_tab, close_tab, evaluate, click_at
 from bosshunter.db import get_db, get_jobs_ready_to_send, update_job_status, add_history, add_risk_event
 from bosshunter.throttle import RequestThrottle, SendWindowChecker, ProgressiveBackoff, should_take_day_off
 
 console = Console()
+
+CHAT_BUTTON_SELECTOR = (
+    'a[redirect-url*="/web/geek/chat"], '
+    'a[data-url*="/friend/add"], '
+    'a.btn-startchat, '
+    '[ka="job_detail_chat"], '
+    '[ka^="go_chat"], '
+    '[ka*="gochat"], '
+    '.op-btn-chat, '
+    '.btn-startchat-wrap'
+)
+
+CHAT_BUTTON_SCRIPT_FOR_TESTS = """
+(() => {
+    const selectors = [
+        'a[redirect-url*="/web/geek/chat"]',
+        'a[data-url*="/friend/add"]',
+        'a.btn-startchat',
+        '[ka="job_detail_chat"]',
+        '[ka^="go_chat"]',
+        '[ka*="gochat"]',
+        '.op-btn-chat',
+        '.btn-startchat-wrap'
+    ];
+    const candidates = selectors.flatMap((selector, priority) =>
+        Array.from(document.querySelectorAll(selector)).map((el) => ({el, selector, priority}))
+    );
+    const isVisible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+    const score = (item) => {
+        const el = item.el;
+        const text = (el.innerText || el.textContent || '').trim();
+        const ka = el.getAttribute('ka') || '';
+        const redirectUrl = el.getAttribute('redirect-url') || '';
+        const dataUrl = el.getAttribute('data-url') || '';
+        const tagName = String(el.tagName || '').toLowerCase();
+        let value = 0;
+        if (isVisible(el)) value += 1000;
+        if (tagName === 'a') value += 200;
+        if (redirectUrl.includes('/web/geek/chat')) value += 300;
+        if (dataUrl.includes('/friend/add')) value += 250;
+        if (el.classList && el.classList.contains('btn-startchat')) value += 120;
+        if (text.includes('沟通')) value += 80;
+        if (ka === 'job_detail_chat' || ka.includes('go_chat') || ka.includes('gochat')) value += 60;
+        if (el.classList && el.classList.contains('btn-startchat-wrap')) value -= 100;
+        return value - item.priority;
+    };
+    const matches = candidates
+        .filter((item) => {
+            const el = item.el;
+            const text = (el.innerText || el.textContent || '').trim();
+            const ka = el.getAttribute('ka') || '';
+            const redirectUrl = el.getAttribute('redirect-url') || '';
+            const dataUrl = el.getAttribute('data-url') || '';
+            return (
+                text.includes('沟通') ||
+                redirectUrl.includes('/web/geek/chat') ||
+                dataUrl.includes('/friend/add') ||
+                ka === 'job_detail_chat' ||
+                ka.includes('go_chat') ||
+                ka.includes('gochat')
+            );
+        })
+        .sort((a, b) => score(b) - score(a));
+    const btn = matches[0] && matches[0].el;
+    if (!btn) return JSON.stringify({
+        success: false,
+        error: 'no_chat_button',
+        candidates: candidates.map((item) => {
+            const el = item.el;
+            const text = (el.innerText || el.textContent || '').trim();
+            return {
+                text,
+                ka: el.getAttribute('ka'),
+                className: String(el.className || ''),
+                tagName: el.tagName,
+                redirectUrl: el.getAttribute('redirect-url'),
+                dataUrl: el.getAttribute('data-url'),
+                visible: isVisible(el)
+            };
+        })
+    });
+    btn.scrollIntoView({block: 'center', inline: 'center'});
+    btn.click();
+    return JSON.stringify({
+        success: true,
+        button_text: (btn.innerText || btn.textContent || '').trim(),
+        ka: btn.getAttribute('ka'),
+        className: String(btn.className || ''),
+        tagName: btn.tagName,
+        redirectUrl: btn.getAttribute('redirect-url'),
+        dataUrl: btn.getAttribute('data-url'),
+        visible: isVisible(btn)
+    });
+})()
+"""
 
 
 def _parse_js_result(result) -> dict:
@@ -33,6 +128,49 @@ def _sleep_or_stop(seconds: float, stop_event) -> bool:
         return bool(stop_event.wait(seconds))
     time.sleep(seconds)
     return False
+
+
+def _confirm_greet_popup(target_id: str) -> dict:
+    click_confirm_js = """
+    (() => {
+        const popup = document.querySelector('.greet-boss-pop, .greet-pop, .dialog-wrap');
+        if (popup) {
+            const confirmBtn = popup.querySelector('[ka="dialog_confirm"], .btn-sure');
+            if (confirmBtn) { confirmBtn.click(); return JSON.stringify({success: true, action: 'confirmed'}); }
+        }
+        return JSON.stringify({success: true, action: 'no_popup'});
+    })()
+    """
+    return _parse_js_result(evaluate(target_id, click_confirm_js))
+
+
+def _wait_for_chat_page(target_id: str, stop_event, attempts: int = 20) -> dict:
+    for _ in range(attempts):
+        if _sleep_or_stop(0.5, stop_event):
+            close_tab(target_id)
+            return {"success": False, "error": "stopped", "history_detail": "用户已请求停止", "skip_backoff": True}
+        url_now = evaluate(target_id, "location.pathname")
+        if url_now and "/web/geek/chat" in url_now:
+            return {"success": True}
+    return {"success": False, "error": "chat_navigation_timeout"}
+
+
+def _click_chat_button(target_id: str, stop_event, attempts: int = 6) -> dict:
+    click_chat_js = CHAT_BUTTON_SCRIPT_FOR_TESTS
+
+    last_result: dict = {"success": False, "error": "no_chat_button"}
+    for attempt in range(max(1, attempts)):
+        if _stop_requested(stop_event):
+            return {"success": False, "error": "stopped", "history_detail": "用户已请求停止", "skip_backoff": True}
+        last_result = _parse_js_result(evaluate(target_id, click_chat_js))
+        if last_result.get("success"):
+            return last_result
+        if last_result.get("error") != "no_chat_button":
+            return last_result
+        if attempt < attempts - 1 and _sleep_or_stop(1, stop_event):
+            return {"success": False, "error": "stopped", "history_detail": "用户已请求停止", "skip_backoff": True}
+
+    return last_result
 
 
 # JS: 在岗位详情页点击"立即沟通"并发送招呼语
@@ -116,19 +254,8 @@ def _send_greeting_once(job: dict, greeting: str, throttle_config: dict) -> tupl
         close_tab(target_id)
         return page_check, None
 
-    click_chat_js = """
-    (() => {
-        const candidates = Array.from(document.querySelectorAll('[ka="job_detail_chat"], .btn-startchat, .op-btn-chat'));
-        const btn = candidates.find((el) => {
-            const text = (el.innerText || el.textContent || '').trim();
-            return text.includes('沟通') || el.getAttribute('ka') === 'job_detail_chat';
-        });
-        if (!btn) return JSON.stringify({success: false, error: 'no_chat_button'});
-        btn.click();
-        return JSON.stringify({success: true});
-    })()
-    """
-    result1a = _parse_js_result(evaluate(target_id, click_chat_js))
+    chat_button_attempts = int(throttle_config.get("_chat_button_attempts", 6))
+    result1a = _click_chat_button(target_id, stop_event, chat_button_attempts)
     if not result1a.get("success"):
         close_tab(target_id)
         return {"success": False, "error": "no_chat_button", "history_detail": "无法找到沟通按钮", "skip_backoff": True}, None
@@ -137,25 +264,30 @@ def _send_greeting_once(job: dict, greeting: str, throttle_config: dict) -> tupl
         close_tab(target_id)
         return {"success": False, "error": "stopped", "history_detail": "用户已请求停止", "skip_backoff": True}, None
 
-    click_confirm_js = """
-    (() => {
-        const popup = document.querySelector('.greet-boss-pop, .greet-pop, .dialog-wrap');
-        if (popup) {
-            const confirmBtn = popup.querySelector('[ka="dialog_confirm"], .btn-sure');
-            if (confirmBtn) { confirmBtn.click(); return JSON.stringify({success: true, action: 'confirmed'}); }
-        }
-        return JSON.stringify({success: true, action: 'no_popup'});
-    })()
-    """
-    evaluate(target_id, click_confirm_js)
+    _confirm_greet_popup(target_id)
 
-    for _ in range(20):
-        if _sleep_or_stop(0.5, stop_event):
-            close_tab(target_id)
-            return {"success": False, "error": "stopped", "history_detail": "用户已请求停止", "skip_backoff": True}, None
-        url_now = evaluate(target_id, "location.pathname")
-        if url_now and "/web/geek/chat" in url_now:
-            break
+    navigation_attempts = int(throttle_config.get("_chat_navigation_attempts", 20))
+    chat_ready = _wait_for_chat_page(target_id, stop_event, navigation_attempts)
+    if chat_ready.get("error") == "stopped":
+        return chat_ready, None
+    if not chat_ready.get("success"):
+        console.print("[yellow]    ! 沟通按钮未跳转聊天页，尝试真实点击兜底[/yellow]")
+        if click_at(target_id, CHAT_BUTTON_SELECTOR):
+            if _sleep_or_stop(1, stop_event):
+                close_tab(target_id)
+                return {"success": False, "error": "stopped", "history_detail": "用户已请求停止", "skip_backoff": True}, None
+            _confirm_greet_popup(target_id)
+            chat_ready = _wait_for_chat_page(target_id, stop_event, navigation_attempts)
+            if chat_ready.get("error") == "stopped":
+                return chat_ready, None
+
+    if not chat_ready.get("success"):
+        return {
+            "success": False,
+            "error": "no_chat_input",
+            "history_detail": "发送失败: 未进入具体聊天会话，可能是BOSS继续沟通跳转失败",
+            "skip_backoff": True,
+        }, target_id
 
     greeting_escaped = json.dumps(greeting)
     send_msg_js = f"""

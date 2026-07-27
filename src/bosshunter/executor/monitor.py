@@ -190,9 +190,21 @@ def _detect_rejection(messages: list[dict]) -> bool:
     hr_msgs_after = _get_hr_messages_after_last_reply(messages)
     for msg in hr_msgs_after:
         text = msg["text"]
+        if _looks_like_non_rejection_action_card(text):
+            continue
         for kw in rejection_keywords:
             if kw in text:
                 return True
+    return False
+
+
+def _looks_like_non_rejection_action_card(text: str) -> bool:
+    """Ignore BOSS system cards whose button labels look like rejection words."""
+    text = text or ""
+    if _looks_like_resume_request_card(text):
+        return True
+    if "您是否接受此工作地点" in text and "暂不考虑" in text and "可以接受" in text:
+        return True
     return False
 
 
@@ -276,9 +288,11 @@ def _build_reply_detail(messages: list[dict], ai_reply: str, schema: str = "repl
     """Build structured history detail containing the HR question and AI reply."""
     hr_messages = _get_hr_messages_after_last_reply(messages)
     hr_question = "\n".join(str(msg.get("text", "")) for msg in hr_messages[-3:]).strip()
+    reply_fingerprint = _reply_fingerprint_from_hr_question(hr_question)
     payload = {
         "schema": schema,
         "hr_question": _truncate_text(hr_question, 1000),
+        "reply_fingerprint": reply_fingerprint,
         "ai_reply": _truncate_text(ai_reply or "", 1000),
         "conversation_tail": [
             {
@@ -287,6 +301,58 @@ def _build_reply_detail(messages: list[dict], ai_reply: str, schema: str = "repl
             }
             for msg in messages[-6:]
         ],
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _parse_reply_detail(detail: str) -> dict:
+    """Parse structured reply detail, returning an empty dict for legacy text rows."""
+    if not isinstance(detail, str) or not detail.strip().startswith("{"):
+        return {}
+    try:
+        payload = json.loads(detail)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _reply_fingerprint_from_hr_question(hr_question: str) -> str:
+    """Build a stable fingerprint for the HR message currently awaiting a decision."""
+    return " ".join(str(hr_question or "").split())
+
+
+def _reply_fingerprint_from_messages(messages: list[dict]) -> str:
+    hr_messages = _get_hr_messages_after_last_reply(messages)
+    hr_question = "\n".join(str(msg.get("text", "")) for msg in hr_messages[-3:]).strip()
+    return _reply_fingerprint_from_hr_question(hr_question)
+
+
+def _reply_fingerprint_from_detail(detail: str) -> str:
+    payload = _parse_reply_detail(detail)
+    fingerprint = payload.get("reply_fingerprint") or payload.get("pending_reply_fingerprint")
+    if isinstance(fingerprint, str) and fingerprint.strip():
+        return _reply_fingerprint_from_hr_question(fingerprint)
+    hr_question = payload.get("hr_question") or payload.get("pending_hr_question")
+    return _reply_fingerprint_from_hr_question(hr_question) if isinstance(hr_question, str) else ""
+
+
+def _build_reply_resolution_detail(
+    schema: str,
+    note: str,
+    pending_detail: str,
+    manual_reply: str = "",
+    pending_history_id: int | None = None,
+) -> str:
+    """Build structured history detail for manual reply decisions."""
+    pending_payload = _parse_reply_detail(pending_detail)
+    pending_hr_question = pending_payload.get("hr_question") if isinstance(pending_payload.get("hr_question"), str) else ""
+    payload = {
+        "schema": schema,
+        "note": note,
+        "pending_history_id": pending_history_id,
+        "pending_reply_fingerprint": _reply_fingerprint_from_detail(pending_detail),
+        "pending_hr_question": _truncate_text(pending_hr_question, 1000),
+        "manual_reply": _truncate_text(manual_reply, 1000),
     }
     return json.dumps(payload, ensure_ascii=False)
 
@@ -791,6 +857,18 @@ def _handle_conversation(job: dict, config: dict) -> str:
             else:
                 console.print("[dim]    在线简历链接已发过，跳过[/dim]")
 
+        if not resume_path:
+            history_detail = _build_reply_detail(
+                messages,
+                "定制简历生成失败，未进入待手动发简历列表",
+                "resume_failed.v1",
+            )
+            db = get_db()
+            add_history(db, job["id"], "resume_failed", history_detail)
+            db.close()
+            close_tab(target_id)
+            return "failed"
+
         # Update status to needs_resume so user knows to send the PDF
         if resume_request_from_card:
             history_detail = _build_reply_detail(
@@ -812,6 +890,14 @@ def _handle_conversation(job: dict, config: dict) -> str:
 
         close_tab(target_id)
         return "needs_resume"
+
+    db = get_db()
+    dismissed_pending_reply = _has_dismissed_pending_reply(db, job["id"], messages)
+    db.close()
+    if dismissed_pending_reply:
+        console.print("[dim]    该回复建议已放弃，跳过本轮[/dim]")
+        close_tab(target_id)
+        return "skipped_dismissed_reply"
 
     # HR replied but not asking for resume — generate a natural reply
     console.print("[cyan]    生成自动回复...[/cyan]")
@@ -874,6 +960,27 @@ def _has_follow_up_history(db, job_id: str) -> bool:
         (job_id,),
     ).fetchone()
     return row is not None
+
+
+def _has_dismissed_pending_reply(db, job_id: str, messages: list[dict] | None = None) -> bool:
+    """Return true when the latest manual reply decision was to dismiss it."""
+    row = db.execute(
+        """
+        SELECT action, detail
+        FROM history
+        WHERE job_id = ?
+          AND action IN ('reply_pending', 'reply_dismissed', 'auto_replied', 'replied')
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (job_id,),
+    ).fetchone()
+    if _row_text(row, "action") != "reply_dismissed":
+        return False
+    dismissed_fingerprint = _reply_fingerprint_from_detail(_row_text(row, "detail"))
+    if not dismissed_fingerprint or messages is None:
+        return True
+    return dismissed_fingerprint == _reply_fingerprint_from_messages(messages)
 
 
 def _check_follow_ups(config: dict, throttle, replied_job_ids: set | None = None) -> int:
@@ -1019,7 +1126,7 @@ def monitor_and_send_resumes(config: dict) -> dict:
             replied_job_ids.add(job["id"])
             action = _handle_conversation(job, config)
 
-            if action in ("skipped_user_replied", "skipped_existing_resume"):
+            if action in ("skipped_user_replied", "skipped_existing_resume", "skipped_dismissed_reply"):
                 summary["skipped"] += 1
             elif action == "auto_replied":
                 summary["replied"] += 1

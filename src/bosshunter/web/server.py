@@ -18,6 +18,7 @@ from bosshunter import __version__
 from bosshunter.config import load_config, CITY_CODES
 from bosshunter.db import (
 	add_history,
+	count_unresolved_monitor_items,
 	get_daily_activity,
 	get_db,
 	get_funnel_stats,
@@ -26,6 +27,7 @@ from bosshunter.db import (
 	get_jobs_ready_to_send,
 	get_jobs_with_send_errors,
 	get_recent_history,
+	get_unresolved_resume_failures,
 	get_stats,
 	get_top_companies,
 	update_job_status,
@@ -349,10 +351,31 @@ def api_top_companies():
 @app.route("/api/history")
 def api_history():
 	limit = int(request.params.get("limit", 15))
+	include_unresolved = request.params.get("include_unresolved", "").lower() in ("1", "true", "yes")
 	db = _get_web_db()
 	try:
 		data = get_recent_history(db, limit)
+		if include_unresolved:
+			seen_ids = {item["id"] for item in data}
+			data.extend(
+				item
+				for item in get_unresolved_resume_failures(db)
+				if item["id"] not in seen_ids
+			)
+			data.sort(
+				key=lambda item: (str(item.get("created_at") or ""), int(item.get("id") or 0)),
+				reverse=True,
+			)
 		return _json_response(data)
+	finally:
+		db.close()
+
+
+@app.route("/api/history/unresolved-replies/count")
+def api_history_unresolved_replies_count():
+	db = _get_web_db()
+	try:
+		return _json_response({"count": count_unresolved_monitor_items(db)})
 	finally:
 		db.close()
 
@@ -522,14 +545,73 @@ def api_job_resume_download(job_id):
 
 @app.route("/api/history/<history_id>/reply", method="POST")
 def api_history_reply(history_id):
+	db = _get_web_db()
 	try:
 		body = request.json or {}
 		message = str(body.get("message", "")).strip()
 		if not message:
 			return _json_response({"error": "回复内容不能为空"}, 400)
+
+		row = db.execute(
+			"SELECT id, job_id, action, detail FROM history WHERE id = ?",
+			(history_id,),
+		).fetchone()
+		if not row:
+			return _json_response({"error": "待回复记录不存在"}, 404)
+		if row["action"] != "reply_pending":
+			return _json_response({"error": "只能确认待回复记录"}, 400)
+
+		from bosshunter.executor.monitor import _build_reply_resolution_detail
+
+		add_history(
+			db,
+			row["job_id"],
+			"replied",
+			_build_reply_resolution_detail(
+				"replied.v1",
+				"Web Dashboard 确认回复",
+				row["detail"],
+				message,
+				int(row["id"]),
+			),
+		)
+		update_job_status(db, row["job_id"], "replied")
 		return _json_response({"success": True, "message": "回复已记录，请在招聘平台手动发送。"})
 	except Exception as e:
 		return _json_response({"error": str(e)}, 500)
+	finally:
+		db.close()
+
+
+@app.route("/api/history/<history_id>/dismiss", method="POST")
+def api_history_dismiss(history_id):
+	db = _get_web_db()
+	try:
+		row = db.execute(
+			"SELECT id, job_id, action, detail FROM history WHERE id = ?",
+			(history_id,),
+		).fetchone()
+		if not row:
+			return _json_response({"error": "待回复记录不存在"}, 404)
+		if row["action"] != "reply_pending":
+			return _json_response({"error": "只能放弃待回复记录"}, 400)
+
+		from bosshunter.executor.monitor import _build_reply_resolution_detail
+
+		add_history(
+			db,
+			row["job_id"],
+			"reply_dismissed",
+			_build_reply_resolution_detail(
+				"reply_dismissed.v1",
+				"Web Dashboard 放弃回复建议",
+				row["detail"],
+				pending_history_id=int(row["id"]),
+			),
+		)
+		return _json_response({"success": True})
+	finally:
+		db.close()
 
 
 # ─── Config APIs ─────────────────────────────────────────
@@ -658,14 +740,8 @@ def api_resume_delete():
 	try:
 		import yaml
 		config = load_config(CONFIG_PATH)
-		resume_path = config.get("profile", {}).get("resume_path", "")
 
-		if resume_path:
-			p = Path(resume_path)
-			if p.exists():
-				p.unlink()
-
-		# Clear config path
+		# Never delete the master resume from disk; only detach it from config.
 		config.setdefault("profile", {})["resume_path"] = ""
 		with open(CONFIG_PATH, "w", encoding="utf-8") as f:
 			yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)

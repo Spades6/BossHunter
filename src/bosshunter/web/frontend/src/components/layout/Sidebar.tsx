@@ -26,11 +26,9 @@ export function Sidebar({ pendingReplies: pendingRepliesProp }: SidebarProps) {
 
     const fetchPendingReplies = async () => {
       try {
-        const res = await fetch('/api/history?limit=50')
-        const history = await res.json()
-        if (Array.isArray(history)) {
-          setPendingReplies(history.filter(item => item.action === 'reply_pending').length)
-        }
+        const res = await fetch('/api/history/unresolved-replies/count')
+        const data = await res.json()
+        setPendingReplies(Number(data.count) || 0)
       } catch {
         setPendingReplies(0)
       }
@@ -73,7 +71,7 @@ export function Sidebar({ pendingReplies: pendingRepliesProp }: SidebarProps) {
               {item.label}
             </span>
             {item.to === '/monitor' && pendingReplies > 0 && (
-              <span className="h-2 w-2 rounded-full bg-danger" aria-label="有待回复" />
+              <span className="h-2 w-2 rounded-full bg-danger" aria-label="有待处理事项" />
             )}
           </NavLink>
         ))}

@@ -79,9 +79,9 @@ class BrowserRuntimeManagerTests(unittest.TestCase):
 
         self.assertEqual(result, [{"targetId": "abc"}])
         self.assertEqual(http_get.call_args_list[0].args, ("http://127.0.0.1:3456/health",))
-        self.assertEqual(http_get.call_args_list[0].kwargs, {"timeout": 3})
+        self.assertEqual(http_get.call_args_list[0].kwargs, {"timeout": 3, "trust_env": False})
         self.assertEqual(http_get.call_args_list[1].args, ("http://127.0.0.1:3456/targets",))
-        self.assertEqual(http_get.call_args_list[1].kwargs, {"timeout": 5})
+        self.assertEqual(http_get.call_args_list[1].kwargs, {"timeout": 5, "trust_env": False})
 
     @patch("bosshunter.browser.runtime.httpx.get")
     def test_runtime_targets_rejects_non_bosshunter_runtime(self, http_get):
@@ -94,7 +94,11 @@ class BrowserRuntimeManagerTests(unittest.TestCase):
         result = runtime_targets({"browser": {"proxy_host": "127.0.0.1", "proxy_port": 3456}})
 
         self.assertIsNone(result)
-        http_get.assert_called_once_with("http://127.0.0.1:3456/health", timeout=3)
+        http_get.assert_called_once_with(
+            "http://127.0.0.1:3456/health",
+            timeout=3,
+            trust_env=False,
+        )
 
     @patch("bosshunter.browser.runtime.runtime_targets")
     @patch("bosshunter.browser.runtime.start_runtime")

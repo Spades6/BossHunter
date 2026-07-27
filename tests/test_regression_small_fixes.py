@@ -132,6 +132,23 @@ class ConfigValidationTests(unittest.TestCase):
         get_db.assert_not_called()
 
 
+class AiPromptRegressionTests(unittest.TestCase):
+    def test_scorer_prompt_treats_platform_metrics_as_evidence(self):
+        from bosshunter.ai.scorer import SCORING_PROMPT
+
+        self.assertIn("小红书/抖音", SCORING_PROMPT)
+        self.assertIn("爆款内容", SCORING_PROMPT)
+        self.assertIn("从0到1起号", SCORING_PROMPT)
+        self.assertIn("不要在missing中写", SCORING_PROMPT)
+
+    def test_tailored_resume_prompt_preserves_platform_growth_cases(self):
+        from bosshunter.ai.resume import RESUME_TAILOR_PROMPT
+
+        self.assertIn("平台案例和量化结果", RESUME_TAILOR_PROMPT)
+        self.assertIn("阅读/观看", RESUME_TAILOR_PROMPT)
+        self.assertIn("粉丝增长", RESUME_TAILOR_PROMPT)
+
+
 class PrefilterHardGateTests(unittest.TestCase):
     def test_deal_breakers_still_match_title_only(self):
         from bosshunter.ai.prefilter import quick_score
@@ -281,6 +298,15 @@ class DashboardPageTests(unittest.TestCase):
         self.assertNotIn("confirmDeliver(pendingGreetingJobs.map", self.source)
         self.assertNotIn("confirmDeliver([job.id])}>发送招呼语", self.source)
 
+    def test_dashboard_pending_greetings_can_be_rejected(self):
+        # Arrange: DashboardPage source is loaded in setUp.
+
+        # Act / Assert
+        self.assertIn("rejectSelectedJobs(pendingGreetingJobs.map(job => job.id))", self.source)
+        pending_section = self.source[self.source.index("待发送招呼语"):]
+        self.assertIn("rejectSelectedJobs([job.id])", pending_section)
+        self.assertIn(">放弃</Button>", pending_section)
+
     def test_dashboard_send_errors_do_not_fake_an_active_full_task(self):
         # Arrange: DashboardPage source is loaded in setUp.
 
@@ -290,6 +316,26 @@ class DashboardPageTests(unittest.TestCase):
         self.assertNotIn("全流程卡在打招呼环节", self.source)
         self.assertIn("放弃已失效岗位", self.source)
         self.assertIn("放弃全部", self.source)
+
+    def test_monitor_pending_replies_can_be_dismissed(self):
+        # Arrange: DashboardPage source is loaded in setUp.
+
+        # Act / Assert
+        self.assertIn("dismissPendingReply", self.source)
+        self.assertIn("/dismiss", self.source)
+        self.assertIn("reply_dismissed", self.source)
+        self.assertIn("放弃", self.source)
+
+    def test_monitor_surfaces_resume_generation_failures_as_pending_items(self):
+        # Arrange: DashboardPage source is loaded in setUp.
+
+        # Act / Assert
+        self.assertIn("item.action === 'resume_failed'", self.source)
+        self.assertIn("isResumeFailureResolved", self.source)
+        self.assertIn("resumeFailures", self.source)
+        self.assertIn("pendingItems", self.source)
+        self.assertIn("displayedHistory", self.source)
+        self.assertIn("定制简历生成失败，尚无可下载文件", self.source)
 
 
 class SidebarTests(unittest.TestCase):
@@ -314,6 +360,11 @@ class SidebarTests(unittest.TestCase):
         self.assertIn("mx-auto flex items-center justify-center", self.source)
         self.assertIn("text-xl", self.source)
         self.assertIn("text-yellow-400", self.source)
+
+    def test_sidebar_fetches_unresolved_reply_count(self):
+        # Act / Assert
+        self.assertIn("/api/history/unresolved-replies/count", self.source)
+        self.assertNotIn("item.action === 'reply_pending'", self.source)
 
 
 class HeaderTests(unittest.TestCase):
