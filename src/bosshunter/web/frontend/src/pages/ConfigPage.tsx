@@ -253,7 +253,7 @@ export default function ConfigPage() {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <label className="text-xs text-foreground">启用自动跟进</label>
-              <Switch checked={config.follow_up?.enabled ?? true} onChange={v => updateConfig('follow_up.enabled', v)} />
+              <Switch checked={config.follow_up?.enabled ?? false} onChange={v => updateConfig('follow_up.enabled', v)} />
             </div>
             <Field label="跟进间隔 (小时)">
               <Input type="number" value={config.follow_up?.interval_hours || 48} onChange={e => updateConfig('follow_up.interval_hours', Number(e.target.value))} min={12} max={168} />

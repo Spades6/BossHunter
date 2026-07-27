@@ -14,7 +14,9 @@ from bosshunter.db import (
     update_job_score,
     update_job_status,
 )
+from bosshunter.executor.sender import CHAT_BUTTON_SCRIPT_FOR_TESTS
 from bosshunter.executor.sender import send_greetings
+from bosshunter.executor.sender import _send_greeting_once
 
 
 def _job(job_id: str, title: str = "Engineer") -> dict:
@@ -36,6 +38,133 @@ def _job(job_id: str, title: str = "Engineer") -> dict:
 
 
 class JobSelectionTests(unittest.TestCase):
+    def test_chat_button_script_prefers_real_anchor_over_visible_wrapper(self):
+        script = CHAT_BUTTON_SCRIPT_FOR_TESTS
+
+        self.assertIn("redirect-url", script)
+        self.assertIn("data-url", script)
+
+        redirect_pos = script.index("redirect-url")
+        wrapper_pos = script.index("btn-startchat-wrap")
+        self.assertLess(redirect_pos, wrapper_pos)
+
+    def test_send_greeting_reports_unavailable_job_page_before_clicking_chat(self):
+        job = {
+            "id": "gone",
+            "url": "https://www.zhipin.com/job_detail/gone.html",
+        }
+
+        with patch("bosshunter.executor.sender.new_tab", return_value="target-1"), \
+             patch("bosshunter.executor.sender.evaluate", return_value='{"success": false, "error": "job_page_unavailable", "history_detail": "岗位页面不存在或已下架", "skip_backoff": true}'), \
+             patch("bosshunter.executor.sender.close_tab") as close_tab, \
+             patch("bosshunter.executor.sender.time.sleep"):
+            result, target_id = _send_greeting_once(
+                job,
+                "您好，我对这个岗位很感兴趣。",
+                {"browse_before_greet": False},
+            )
+
+        self.assertIsNone(target_id)
+        self.assertEqual(result["error"], "job_page_unavailable")
+        self.assertEqual(result["history_detail"], "岗位页面不存在或已下架")
+        close_tab.assert_called_once_with("target-1")
+
+    def test_send_greeting_uses_real_click_fallback_when_chat_button_does_not_navigate(self):
+        job = {
+            "id": "continue-chat",
+            "url": "https://www.zhipin.com/job_detail/continue-chat.html",
+        }
+        evaluate_results = [
+            '{"success": true}',  # page check
+            '{"success": true, "button_text": "继续沟通"}',  # DOM click
+            '{"success": true, "action": "no_popup"}',  # confirm popup
+            "/job_detail/continue-chat.html",  # DOM click did not navigate
+            '{"success": true, "action": "no_popup"}',  # confirm after real click
+            "/web/geek/chat",  # real click reached chat
+            '{"success": true}',  # send message
+        ]
+
+        with patch("bosshunter.executor.sender.new_tab", return_value="target-1"), \
+             patch("bosshunter.executor.sender.evaluate", side_effect=evaluate_results), \
+             patch("bosshunter.executor.sender.click_at", return_value=True) as click_at, \
+             patch("bosshunter.executor.sender.close_tab") as close_tab, \
+             patch("bosshunter.executor.sender.time.sleep"):
+            result, target_id = _send_greeting_once(
+                job,
+                "您好，我对这个岗位很感兴趣。",
+                {"browse_before_greet": False, "_chat_navigation_attempts": 1},
+            )
+
+        self.assertIsNone(target_id)
+        self.assertTrue(result["success"])
+        click_at.assert_called_once()
+        fallback_selector = click_at.call_args.args[1]
+        self.assertLess(fallback_selector.index("a.btn-startchat"), fallback_selector.index("btn-startchat-wrap"))
+        close_tab.assert_called_once_with("target-1")
+
+    def test_send_greeting_waits_for_chat_button_before_failing(self):
+        job = {
+            "id": "slow-chat-button",
+            "url": "https://www.zhipin.com/job_detail/slow-chat-button.html",
+        }
+        evaluate_results = [
+            '{"success": true}',  # page check
+            '{"success": false, "error": "no_chat_button"}',
+            '{"success": true, "button_text": "继续沟通"}',
+            '{"success": true, "action": "no_popup"}',
+            "/web/geek/chat",
+            '{"success": true}',
+        ]
+
+        with patch("bosshunter.executor.sender.new_tab", return_value="target-1"), \
+             patch("bosshunter.executor.sender.evaluate", side_effect=evaluate_results) as evaluate_mock, \
+             patch("bosshunter.executor.sender.close_tab") as close_tab, \
+             patch("bosshunter.executor.sender.time.sleep"):
+            result, target_id = _send_greeting_once(
+                job,
+                "您好，我对这个岗位很感兴趣。",
+                {
+                    "browse_before_greet": False,
+                    "_chat_button_attempts": 2,
+                    "_chat_navigation_attempts": 1,
+                },
+            )
+
+        self.assertIsNone(target_id)
+        self.assertTrue(result["success"])
+        self.assertEqual(evaluate_mock.call_count, len(evaluate_results))
+        close_tab.assert_called_once_with("target-1")
+
+    def test_send_greetings_reopens_job_page_once_when_chat_input_missing(self):
+        job = _job("retry-chat-input")
+        job["greeting"] = "您好，我对这个岗位很感兴趣。"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "bosshunter.db"
+            db = get_db(db_path)
+            try:
+                insert_job(db, job)
+                update_job_status(db, job["id"], "ready")
+                update_job_greeting(db, job["id"], job["greeting"])
+            finally:
+                db.close()
+
+            attempts = [
+                ({"success": False, "error": "no_chat_input"}, "target-1"),
+                ({"success": True}, None),
+            ]
+
+            with patch("bosshunter.db.DB_PATH", db_path), \
+                 patch("bosshunter.executor.sender.should_take_day_off", return_value=False), \
+                 patch("bosshunter.executor.sender.SendWindowChecker.is_active", return_value=True), \
+                 patch("bosshunter.executor.sender._send_greeting_once", side_effect=attempts) as send_once, \
+                 patch("bosshunter.executor.sender.close_tab") as close_tab:
+                sent = send_greetings({"throttle": {"daily_limit": 10}}, force=True)
+
+            self.assertEqual(sent, 1)
+            self.assertEqual(send_once.call_count, 2)
+            close_tab.assert_called_once_with("target-1")
+
     def test_pending_confirmation_excludes_jobs_with_greetings(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = get_db(Path(tmp) / "bosshunter.db")

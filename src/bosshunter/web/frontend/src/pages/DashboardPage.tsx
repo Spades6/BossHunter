@@ -111,17 +111,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
     () => workbench.pending_greetings.filter(job => !confirmedDeliveryIds.has(job.id)),
     [workbench.pending_greetings, confirmedDeliveryIds]
   )
-  const blockedFullTask: WorkbenchTask | null = !workbench.task && workbench.send_errors.length > 0
-    ? {
-        id: 'send-errors-blocked-full-flow',
-        mode: 'full',
-        label: '运行全流程',
-        status: 'running',
-        logs: ['发送失败待处理'],
-        stop_requested: false,
-      }
-    : null
-  const activeTask = workbench.task || blockedFullTask
+  const activeTask = workbench.task
   const visibleTask = activeTask || workbench.last_task
   const pendingReplies = history.filter(item => item.action === 'reply_pending')
 
@@ -144,10 +134,6 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
     if (modePending) return
     try {
       if (activeTask?.mode === mode) {
-        if (blockedFullTask) {
-          setNotice('全流程卡在打招呼环节，请先处理下方发送失败待处理。')
-          return
-        }
         if (window.confirm(`是否停止当前${activeTask.label}任务？已入库岗位会保留。`)) {
           setModePending(mode)
           setNotice(`正在停止${activeTask.label}...`)
@@ -281,7 +267,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
   }
 
   if (view === 'monitor') {
-    return <MonitorExecutionView history={history} />
+    return <MonitorExecutionView history={history} refresh={refresh} />
   }
 
   return (
@@ -406,9 +392,12 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
           <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
             <div>
               <h3 className="text-lg font-black text-danger">发送失败待处理</h3>
-              <p className="mt-1 text-xs text-danger/80">这些岗位已生成招呼语，但没有成功发送。处理后才会进入监测环节。</p>
+              <p className="mt-1 text-xs text-danger/80">这些岗位已生成招呼语，但没有成功发送。你可以重试，或放弃已失效岗位。</p>
             </div>
-            <Button size="sm" onClick={() => confirmDeliver(workbench.send_errors.map(job => job.id))}>重新发送全部 {workbench.send_errors.length} 个</Button>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => confirmDeliver(workbench.send_errors.map(job => job.id))}>重新发送全部 {workbench.send_errors.length} 个</Button>
+              <Button variant="secondary" size="sm" onClick={() => rejectSelectedJobs(workbench.send_errors.map(job => job.id))}>放弃全部</Button>
+            </div>
           </div>
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {workbench.send_errors.map(job => (
@@ -423,6 +412,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
                 <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted">{job.greeting || '招呼语已生成，等待重新发送。'}</p>
                 <div className="mt-3 flex gap-2">
                   <Button size="sm" onClick={() => sendReadyGreetings([job.id])}>重新发送</Button>
+                  <Button variant="secondary" size="sm" onClick={() => rejectSelectedJobs([job.id])}>放弃</Button>
                   <Button variant="secondary" size="sm" onClick={() => openJobDetail(job)}><Eye className="mr-2 h-4 w-4" />查看详情</Button>
                   <Button variant="secondary" size="sm" disabled={!job.url} onClick={() => window.open(job.url, '_blank', 'noopener,noreferrer')}><ExternalLink className="mr-2 h-4 w-4" />跳转岗位链接</Button>
                 </div>
@@ -439,7 +429,10 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
               <h3 className="text-lg font-black">待发送招呼语</h3>
               <p className="mt-1 text-xs text-muted">这些岗位已确认并生成招呼语，点击后会直接进入发送流程。</p>
             </div>
-            <Button size="sm" onClick={() => sendReadyGreetings(pendingGreetingJobs.map(job => job.id))}>发送全部 {pendingGreetingJobs.length} 个</Button>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => sendReadyGreetings(pendingGreetingJobs.map(job => job.id))}>发送全部 {pendingGreetingJobs.length} 个</Button>
+              <Button variant="secondary" size="sm" onClick={() => rejectSelectedJobs(pendingGreetingJobs.map(job => job.id))}>放弃全部</Button>
+            </div>
           </div>
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {pendingGreetingJobs.map(job => (
@@ -454,6 +447,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
                 <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted">{job.greeting || '招呼语已生成，等待发送。'}</p>
                 <div className="mt-3 flex gap-2">
                   <Button size="sm" onClick={() => sendReadyGreetings([job.id])}>发送招呼语</Button>
+                  <Button variant="secondary" size="sm" onClick={() => rejectSelectedJobs([job.id])}>放弃</Button>
                   <Button variant="secondary" size="sm" onClick={() => openJobDetail(job)}><Eye className="mr-2 h-4 w-4" />查看详情</Button>
                   <Button variant="secondary" size="sm" disabled={!job.url} onClick={() => window.open(job.url, '_blank', 'noopener,noreferrer')}><ExternalLink className="mr-2 h-4 w-4" />跳转岗位链接</Button>
                 </div>
@@ -576,6 +570,7 @@ function JobsPoolView({ jobs }: { jobs: Job[] }) {
 }
 
 type MonitorFilter = 'pending' | 'resume' | 'follow_up' | 'replied'
+const REPLY_RESOLUTION_ACTIONS = ['reply_dismissed', 'replied', 'auto_replied']
 
 function uniqueLatestByJob(items: HistoryItem[]) {
   const seen = new Set<string>()
@@ -587,15 +582,47 @@ function uniqueLatestByJob(items: HistoryItem[]) {
   })
 }
 
+function sameHistoryJob(left: HistoryItem, right: HistoryItem) {
+  if (left.job_id && right.job_id) return left.job_id === right.job_id
+  return left.company === right.company && left.title === right.title
+}
+
+function isReplyPendingResolved(item: HistoryItem, history: HistoryItem[]) {
+  return history.some(candidate =>
+    candidate.id !== item.id
+    && sameHistoryJob(item, candidate)
+    && REPLY_RESOLUTION_ACTIONS.includes(candidate.action)
+    && candidate.created_at >= item.created_at
+  )
+}
+
+function isResumeFailureResolved(item: HistoryItem, history: HistoryItem[]) {
+  return history.some(candidate =>
+    candidate.id > item.id
+    && sameHistoryJob(item, candidate)
+    && (candidate.action === 'needs_resume' || candidate.action === 'resume_sent')
+  )
+}
+
 function latestHrText(item: HistoryItem) {
   const parsed = parseHistoryDetail(item)
   const latestHr = [...parsed.conversationTail].reverse().find(message => message.sender === 'hr' && message.text.trim())
   return parsed.hrQuestion || latestHr?.text || ''
 }
 
-function MonitorExecutionView({ history }: { history: HistoryItem[] }) {
-  const pendingReplies = uniqueLatestByJob(history.filter(item => item.action === 'reply_pending'))
-  const resumeRequests = uniqueLatestByJob(history.filter(item => item.action === 'needs_resume' || item.action === 'resume_sent'))
+function MonitorExecutionView({ history, refresh }: { history: HistoryItem[]; refresh: () => Promise<void> }) {
+  const pendingReplies = uniqueLatestByJob(history.filter(item =>
+    item.action === 'reply_pending' && !isReplyPendingResolved(item, history)
+  ))
+  const resumeFailures = uniqueLatestByJob(history.filter(item =>
+    item.action === 'resume_failed' && !isResumeFailureResolved(item, history)
+  ))
+  const pendingItems = uniqueLatestByJob(
+    [...pendingReplies, ...resumeFailures].sort((left, right) => right.id - left.id)
+  )
+  const resumeRequests = uniqueLatestByJob(history.filter(item =>
+    item.action === 'needs_resume' || item.action === 'resume_sent' || item.action === 'resume_failed'
+  ))
   const resumeRequestJobIds = new Set(resumeRequests.map(item => item.job_id).filter(Boolean))
   const followUpRecords = uniqueLatestByJob(history.filter(item => item.action === 'follow_up_sent'))
   const repliedRecords = uniqueLatestByJob(history.filter(item =>
@@ -609,7 +636,10 @@ function MonitorExecutionView({ history }: { history: HistoryItem[] }) {
       ? followUpRecords
       : activeMonitorFilter === 'replied'
         ? repliedRecords
-        : pendingReplies
+        : pendingItems
+  const displayedHistory = activeMonitorFilter === 'pending' || activeMonitorFilter === 'resume'
+    ? visibleHistory
+    : visibleHistory.slice(0, 8)
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({})
   const [notice, setNotice] = useState('')
 
@@ -629,9 +659,25 @@ function MonitorExecutionView({ history }: { history: HistoryItem[] }) {
         const data = await res.json().catch(() => ({}))
         throw new Error(data.error || '回复失败')
       }
-      setNotice('回复已发送，请刷新查看最新状态。')
+      await refresh()
+      setNotice('回复已记录，请在招聘平台手动发送。')
     } catch (err) {
       setNotice(err instanceof Error ? err.message : '回复失败')
+    }
+  }
+
+  const dismissPendingReply = async (item: HistoryItem) => {
+    if (!window.confirm('确定放弃这条待回复建议吗？放弃后不会发送消息，也不会把岗位标记为拒绝。')) return
+    try {
+      const res = await fetch(`/api/history/${item.id}/dismiss`, { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || '放弃失败')
+      }
+      await refresh()
+      setNotice('已放弃这条待回复建议。')
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : '放弃失败')
     }
   }
 
@@ -642,11 +688,11 @@ function MonitorExecutionView({ history }: { history: HistoryItem[] }) {
           <h2 className="text-2xl font-black">监测执行</h2>
           <p className="mt-1 text-sm text-muted">这里不启动监测，只处理监测发现的 HR 问题、回复建议和结果。</p>
         </div>
-        <span className="rounded-full bg-[#FFF0E5] px-3 py-2 text-xs font-black text-primary">待回复 {pendingReplies.length}</span>
+        <span className="rounded-full bg-[#FFF0E5] px-3 py-2 text-xs font-black text-primary">待处理 {pendingItems.length}</span>
       </div>
       <div className="mb-4 flex flex-wrap gap-2">
         {[
-          { key: 'pending' as const, label: '待回复', count: pendingReplies.length },
+          { key: 'pending' as const, label: '待处理', count: pendingItems.length },
           { key: 'resume' as const, label: '简历请求', count: resumeRequests.length },
           { key: 'follow_up' as const, label: '自动跟进', count: followUpRecords.length },
           { key: 'replied' as const, label: '已回复', count: repliedRecords.length },
@@ -666,10 +712,11 @@ function MonitorExecutionView({ history }: { history: HistoryItem[] }) {
       </div>
       {notice && <div className="mb-3 rounded-2xl bg-[#FFF0E5] px-4 py-3 text-sm text-primary">{notice}</div>}
       <div className="space-y-3">
-        {visibleHistory.slice(0, 8).map((item, index) => {
+        {displayedHistory.map((item, index) => {
           const canReply = item.action === 'reply_pending'
           const isFollowUp = item.action === 'follow_up_sent'
-          const isResumeRequest = item.action === 'needs_resume' || item.action === 'resume_sent'
+          const isResumeFailure = item.action === 'resume_failed'
+          const isResumeRequest = item.action === 'needs_resume' || item.action === 'resume_sent' || isResumeFailure
           const isReplied = item.action === 'replied' || item.action === 'auto_replied'
           const parsed = parseHistoryDetail(item)
           const hrText = latestHrText(item)
@@ -718,6 +765,8 @@ function MonitorExecutionView({ history }: { history: HistoryItem[] }) {
                   <p className="mt-2 text-xs text-primary">简历请求：监测发现 HR 要简历，已生成定制简历，等待手动发送。</p>
                 ) : item.action === 'resume_sent' ? (
                   <p className="mt-2 text-xs text-primary">简历生成：定制简历已生成，并已标记发送。</p>
+                ) : isResumeFailure ? (
+                  <p className="mt-2 text-xs text-danger">待处理：定制简历生成失败，尚无可下载文件，请手动处理或稍后重试生成。</p>
                 ) : isReplied ? (
                   <p className="mt-2 text-xs text-primary">已回复：HR 已有反馈或系统已完成回复处理。</p>
                 ) : null}
@@ -725,6 +774,7 @@ function MonitorExecutionView({ history }: { history: HistoryItem[] }) {
               <div className="grid gap-2">
                 <Button size="sm" disabled={!canReply} onClick={() => sendManualReply(item)}><MessageCircle className="mr-2 h-4 w-4" />确认回复</Button>
                 <Button variant="secondary" size="sm" disabled={!canReply} onClick={() => setReplyDrafts(prev => ({ ...prev, [item.id]: draftFor(item) }))}>编辑回复</Button>
+                <Button variant="secondary" size="sm" disabled={!canReply} onClick={() => dismissPendingReply(item)}>放弃</Button>
               </div>
             </div>
           )

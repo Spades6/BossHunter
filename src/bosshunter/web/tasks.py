@@ -17,6 +17,7 @@ MODE_LABELS = {
 }
 
 TERMINAL_STATUSES = {"completed", "failed", "stopped"}
+ACTIVE_STATUSES = {"running"}
 
 
 class TaskAlreadyRunningError(RuntimeError):
@@ -101,6 +102,9 @@ class WorkbenchTaskRunner:
             task.stop_requested.set()
             task.status = "stopping"
             task.updated_at = datetime.now().isoformat(timespec="seconds")
+            confirmation_event = task.context.get("confirmation_event")
+            if isinstance(confirmation_event, Event):
+                confirmation_event.set()
             return task.snapshot()
 
     def wait(self, timeout: float | None = None) -> None:
@@ -121,12 +125,16 @@ class WorkbenchTaskRunner:
                 task.updated_at = datetime.now().isoformat(timespec="seconds")
         except Exception as exc:
             with self._lock:
-                task.status = "failed"
-                task.error = str(exc)
+                if task.stop_requested.is_set():
+                    task.status = "stopped"
+                    task.error = None
+                else:
+                    task.status = "failed"
+                    task.error = str(exc)
                 task.updated_at = datetime.now().isoformat(timespec="seconds")
 
     def _active_task_locked(self) -> WorkbenchTask | None:
         for task in self._tasks.values():
-            if task.status not in TERMINAL_STATUSES:
+            if task.status in ACTIVE_STATUSES:
                 return task
         return None

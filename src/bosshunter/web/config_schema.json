@@ -74,7 +74,7 @@
       "label": "跟进设置",
       "icon": "MessageCircle",
       "fields": [
-        {"key": "enabled", "label": "启用自动跟进", "type": "switch", "default": true, "description": "对超时未回复的HR自动发送跟进消息"},
+        {"key": "enabled", "label": "启用自动跟进", "type": "switch", "default": false, "description": "对超时未回复的HR自动发送跟进消息"},
         {"key": "interval_hours", "label": "跟进间隔 (小时)", "type": "number", "min": 12, "max": 168, "default": 48, "description": "发送后多久未回复则跟进"},
         {"key": "skip_weekends", "label": "跳过周末节假日", "type": "switch", "default": true, "description": "周末和节假日不发送跟进消息"}
       ]

@@ -43,6 +43,7 @@ class RuntimeClient:
                 params={"target": target_id},
                 content=expression,
                 timeout=timeout,
+                trust_env=False,
             )
             if response.status_code == 200:
                 if not response.content:
@@ -72,6 +73,7 @@ class RuntimeClient:
                 params={"target": target_id},
                 json={"selector": selector, "files": files},
                 timeout=10,
+                trust_env=False,
             )
             return response.status_code == 200
         except httpx.HTTPError:
@@ -97,7 +99,7 @@ class RuntimeClient:
 
     def _get_json(self, path: str, params: dict[str, Any] | None = None, timeout: float = 5) -> Any:
         try:
-            response = httpx.get(f"{self.base_url}{path}", params=params, timeout=timeout)
+            response = httpx.get(f"{self.base_url}{path}", params=params, timeout=timeout, trust_env=False)
             if response.status_code == 200:
                 return response.json()
         except (httpx.HTTPError, ValueError):
@@ -106,14 +108,20 @@ class RuntimeClient:
 
     def _get_ok(self, path: str, params: dict[str, Any] | None = None, timeout: float = 5) -> bool:
         try:
-            response = httpx.get(f"{self.base_url}{path}", params=params, timeout=timeout)
+            response = httpx.get(f"{self.base_url}{path}", params=params, timeout=timeout, trust_env=False)
             return response.status_code == 200
         except httpx.HTTPError:
             return False
 
     def _post_ok(self, path: str, params: dict[str, Any], content: str, timeout: float = 10) -> bool:
         try:
-            response = httpx.post(f"{self.base_url}{path}", params=params, content=content, timeout=timeout)
+            response = httpx.post(
+                f"{self.base_url}{path}",
+                params=params,
+                content=content,
+                timeout=timeout,
+                trust_env=False,
+            )
             return response.status_code == 200
         except httpx.HTTPError:
             return False

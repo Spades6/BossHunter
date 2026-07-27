@@ -6,11 +6,6 @@
 
 **BossHunter** 是一个基于 AI + CDP 浏览器自动化的智能求职助手，通过「AI 评分 + 人工确认」策略，帮助求职者更高效地筛选岗位、准备沟通内容并管理投递状态。
 
-> 如果 BossHunter 帮你节省了求职时间，欢迎点一个 Star 支持项目继续维护：  
-> ⭐ https://github.com/powerycy/BossHunter
->
-> 你的 Star 会帮助项目继续推进招聘平台适配、AI 岗位匹配、Web Dashboard 和本地隐私体验优化。
-
 ---
 
 ## 项目演示
@@ -24,18 +19,6 @@
 ### 产品介绍 PPT
 
 ![BossHunter 产品介绍 PPT](docs/demo/bossHunter-product-intro.gif)
-
-### 产品截图
-
-| 工作台 | 岗位池 |
-|---|---|
-| ![BossHunter 工作台](docs/demo/screenshots/workbench.png) | ![BossHunter 岗位池](docs/demo/screenshots/jobs.png) |
-
-| 监测执行 | AI 配置 |
-|---|---|
-| ![BossHunter 监测执行](docs/demo/screenshots/monitor.jpg) | ![BossHunter 配置页](docs/demo/screenshots/config-1.png) |
-
-![BossHunter 配置详情](docs/demo/screenshots/config-2.png)
 
 ---
 
@@ -61,7 +44,7 @@
 
 - **仪表盘去重**：同一岗位的监测记录在前端按最新记录展示，减少重复刷屏。
 - **统计口径优化**：「简历生成」按实际生成的简历文件统计。
-- **AI 提供商只读**：当前版本固定使用 Anthropic Messages 兼容链路，减少误配置。
+- **AI 提供商配置**：Web 面板默认使用 Anthropic；也可在 `config.yaml` 中配置 OpenAI 兼容接口。
 - **本地 Browser Runtime**：内置 CDP 代理连接日常 Chrome，减少额外浏览器配置成本。
 
 ---
@@ -133,57 +116,6 @@ BossHunter 适合这些用户：
 
 ---
 
-## 使用教程
-
-### 一、前置准备
-
-1. **安装 Python、Node.js 与 Chrome**
-   - Python 3.10+
-   - Node.js 22+
-   - Chrome 最新稳定版
-
-2. **开启 Chrome 远程调试能力**
-   - 在 Chrome 地址栏打开 `chrome://inspect/#remote-debugging`
-   - 勾选 **Allow remote debugging**
-   - 如未生效，重启 Chrome 后再试
-
-3. **登录招聘平台**
-   - 使用你的日常 Chrome 登录目标招聘平台
-   - BossHunter 通过本地 CDP 连接已有浏览器，不保存平台账号密码
-
-### 二、安装并启动
-
-```bash
-git clone https://github.com/powerycy/BossHunter.git
-cd BossHunter
-pip install -e .
-bosshunter web
-```
-
-打开 `http://127.0.0.1:8686` 完成 Web 端配置。
-
-### 三、Web 端配置
-
-在配置面板中完成：
-
-- 上传 Markdown 格式简历
-- 设置搜索关键词、目标城市、薪资区间
-- 设置评分阈值、发送频率、时间窗口
-- 配置 Anthropic 或 Anthropic Messages 兼容 API
-- 保存配置
-
-### 四、运行全流程
-
-```bash
-bosshunter run
-```
-
-系统自动执行：采集 → AI 评分 → 人工确认 → 生成招呼语 → 发送 → 自动监测。
-
-> 操作间存在拟人化时间间隔，请耐心等待。按 `Ctrl+C` 可随时停止。
-
----
-
 ## 前置条件
 
 | 依赖 | 版本 | 用途 |
@@ -191,7 +123,7 @@ bosshunter run
 | Python | 3.10+ | 核心运行时 |
 | Node.js | 22+ | 本地 Browser Runtime / CDP 代理 |
 | Chrome | 最新稳定版 | 连接已登录浏览器 |
-| AI API Key | — | Anthropic 或 Anthropic Messages 兼容接口 |
+| AI API Key | — | Anthropic 或 OpenAI 兼容接口 |
 
 ### Chrome 远程调试开启方式
 
@@ -209,7 +141,9 @@ chrome.exe --remote-debugging-port=9222
 
 ---
 
-## 安装
+## 快速开始
+
+### 一、安装
 
 ```bash
 # 1. 克隆仓库
@@ -221,16 +155,26 @@ pip install -e .
 
 # 可选：仅在需要 xhtml2pdf fallback 渲染时安装
 pip install -e ".[pdf]"
-
-# 3. 复制并编辑配置（或通过 Web 面板配置）
-cp config.example.yaml config.yaml
-
-# 4. 准备简历文件
-# 将你的 Markdown 格式简历放到项目根目录，命名为 resume.md
-
-# 5. 验证浏览器连接
-bosshunter connect
 ```
+
+### 二、配置
+
+```bash
+bosshunter web
+```
+
+打开 `http://127.0.0.1:8686`，上传 Markdown 简历并设置搜索条件、评分阈值、发送频率、时间窗口和 AI 接口。
+
+### 三、连接浏览器并运行
+
+```bash
+bosshunter connect
+bosshunter run
+```
+
+系统自动执行：采集 → AI 评分 → 人工确认 → 生成招呼语 → 发送 → 自动监测。
+
+> 请先在日常 Chrome 中登录招聘平台并开启远程调试。操作间存在拟人化时间间隔，按 `Ctrl+C` 可随时停止。
 
 ---
 
@@ -294,10 +238,10 @@ bosshunter status --full        # 完整仪表盘
 
 ### AI 兼容接口说明
 
-当前版本固定使用 Anthropic Messages 接口形态：
+当前版本支持两类接口：
 
-- 官方 Anthropic：只需要填写 API Key 与模型名。
-- 兼容 API：填写 Base URL 与模型名；后端会尝试读取 `/v1/models` 并对模型名做模糊匹配。
+- Anthropic Messages：填写 API Key 与模型名；兼容服务还可填写 Base URL，后端会尝试读取 `/v1/models` 并匹配模型名。
+- OpenAI 兼容接口：在 `config.yaml` 中设置 `provider: openai_compatible`、Base URL、API Key 与模型名。
 - 公开仓库不包含任何真实 API Key、内部域名或个人配置。
 
 ---
@@ -358,34 +302,13 @@ BossHunter/
 A: 存在风险。本项目通过低频、随机间隔、时间窗口和人工确认降低风险，但平台随时可能更新检测逻辑。建议保守配置。
 
 ### Q: 支持哪些 AI 服务？
-A: 当前后端使用 Anthropic Messages 接口形态，支持官方 Anthropic 与兼容 API。兼容 API 需要自行填写 Base URL，并确认其支持 `/v1/messages` 与 `/v1/models`。
+A: 支持官方 Anthropic、Anthropic Messages 兼容接口和 OpenAI 兼容的 Chat Completions 接口。兼容服务需要自行填写 Base URL、API Key 与模型名。
 
 ### Q: 简历是什么格式？
 A: 上传 Markdown 格式简历。AI 会根据具体岗位 JD 动态生成定制简历，并输出 PDF。
 
 ### Q: 为什么需要 Chrome 远程调试？
 A: 项目通过 CDP (Chrome DevTools Protocol) 直连你日常使用的浏览器，天然携带登录态，无需保存招聘平台账号密码。
-
----
-
-## Roadmap
-
-BossHunter 仍在持续完善中，后续计划包括：
-
-- [ ] 更稳定的招聘平台页面适配
-- [ ] 更智能的岗位匹配评分
-- [ ] 简历与岗位 JD 自动匹配分析
-- [ ] 招呼语风格自定义
-- [ ] 投递记录与结果统计看板
-- [ ] HR 回复监测与提醒
-- [ ] 多模型 AI Provider 支持
-- [ ] 更多招聘平台支持
-- [ ] 更完善的本地隐私保护
-- [ ] 一键安装 / 桌面端体验优化
-
-如果你希望这些能力继续推进，欢迎点一个 Star 支持项目维护：
-
-⭐ https://github.com/powerycy/BossHunter
 
 ---
 
@@ -396,7 +319,7 @@ BossHunter 是个人维护的开源项目。如果它对你有帮助，欢迎：
 - 点 Star 收藏项目
 - 分享给正在找工作的朋友
 - 提 Issue 反馈真实使用问题
-- 参与 Roadmap 讨论
+- 参与功能规划讨论
 - 提交 PR 一起完善功能
 
 你的 Star 会帮助项目获得更多曝光，也会让我更有动力继续维护招聘平台适配、AI 匹配能力和 Web Dashboard。
@@ -419,7 +342,3 @@ https://github.com/powerycy/BossHunter
 ## License
 
 [MIT License](LICENSE)
-
----
-
-<sub>本项目与任何招聘平台及其关联公司无任何隶属、合作或背书关系。所有商标归其各自所有者所有。</sub>

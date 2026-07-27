@@ -30,6 +30,11 @@ data/
 
 # Node
 node_modules/
+*.tsbuildinfo
+
+# Local generated artifacts
+output/
+tmp/
 
 # OS
 .DS_Store
@@ -39,3 +44,4 @@ Thumbs.db
 .claude/
 .superpowers/
 docs/superpowers/
+AGENTS.md
