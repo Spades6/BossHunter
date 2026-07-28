@@ -106,6 +106,15 @@ class SendWindowChecker:
         latest_end = max(end_h * 60 + end_m for _, _, end_h, end_m in self._windows)
         return self._current_minutes() >= latest_end
 
+    def latest_end_datetime(self, now: datetime | None = None) -> datetime | None:
+        """Return today's latest configured window end in local time."""
+        if not self._windows:
+            return None
+        current = now or datetime.now()
+        latest_end = max(end_h * 60 + end_m for _, _, end_h, end_m in self._windows)
+        end_hour, end_minute = divmod(latest_end, 60)
+        return current.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
+
     def next_window_info(self) -> str:
         """Describe when next window opens."""
         if not self._windows:
@@ -133,7 +142,9 @@ class SendWindowChecker:
         parts = s.strip().split(":")
         if len(parts) == 2:
             try:
-                return int(parts[0]), int(parts[1])
+                hour, minute = int(parts[0]), int(parts[1])
+                if 0 <= hour <= 23 and 0 <= minute <= 59:
+                    return hour, minute
             except ValueError:
                 pass
         return -1, -1

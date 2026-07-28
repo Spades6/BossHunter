@@ -210,6 +210,57 @@ class MonitorReplyDismissTests(unittest.TestCase):
         self.assertEqual(actions, ["resume_failed"])
         self.assertEqual(needing_resume, [])
 
+    def test_resume_failure_history_keeps_hr_message_and_system_reason_separate(self):
+        from bosshunter.executor import monitor
+
+        messages = [
+            {"sender": "me", "text": "您好，我对岗位很感兴趣。"},
+            {"sender": "hr", "text": "请发一份简历。"},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "data" / "bosshunter.db"
+            db = get_db(db_path)
+            try:
+                insert_job(db, _job("job-resume-reason"))
+                update_job_status(db, "job-resume-reason", "sent")
+            finally:
+                db.close()
+
+            def open_db():
+                return get_db(db_path)
+
+            with patch.object(monitor, "get_db", side_effect=open_db), \
+                 patch.object(monitor, "_open_conversation", return_value="target-1"), \
+                 patch.object(monitor, "evaluate", return_value=json.dumps(messages, ensure_ascii=False)), \
+                 patch.object(monitor, "close_tab"), \
+                 patch.object(monitor, "_send_message_in_chat", return_value=True), \
+                 patch("bosshunter.ai.resume.generate_tailored_resume", return_value=None), \
+                 patch(
+                     "bosshunter.ai.resume.get_last_resume_failure_reason",
+                     return_value="占位符校验失败：模型新增了 [待填写姓名]",
+                 ):
+                action = monitor._handle_conversation(
+                    _job("job-resume-reason") | {"status": "sent"},
+                    {"profile": {"portfolio_url": "https://example.com/resume"}},
+                )
+
+            verify_db = get_db(db_path)
+            try:
+                detail = verify_db.execute(
+                    "SELECT detail FROM history WHERE job_id = ? AND action = 'resume_failed'",
+                    ("job-resume-reason",),
+                ).fetchone()["detail"]
+            finally:
+                verify_db.close()
+
+        payload = json.loads(detail)
+        self.assertEqual(action, "failed")
+        self.assertEqual(payload["schema"], "resume_failed.v2")
+        self.assertEqual(payload["hr_question"], "请发一份简历。")
+        self.assertEqual(payload["system_reason"], "占位符校验失败：模型新增了 [待填写姓名]")
+        self.assertEqual(payload["ai_reply"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

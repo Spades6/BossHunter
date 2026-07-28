@@ -46,6 +46,8 @@ interface WorkbenchTask {
   status: string
   logs: string[]
   error?: string
+  deadline_at?: string
+  stop_reason?: string
   stop_requested: boolean
 }
 
@@ -63,6 +65,7 @@ interface HistoryDetailPayload {
   schema: string
   hr_question: string
   ai_reply: string
+  system_reason?: string
   conversation_tail?: Array<{
     sender: string
     text: string
@@ -78,6 +81,8 @@ interface HistoryItem {
   created_at: string
   company: string
   title: string
+  resume_path?: string
+  resolved?: boolean
 }
 
 const emptyWorkbench: WorkbenchData = {

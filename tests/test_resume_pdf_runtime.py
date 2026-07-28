@@ -70,6 +70,105 @@ class ResumeArtifactTests(unittest.TestCase):
         self.assertIn("岗位JD覆盖", artifacts)
         self.assertIn("无法覆盖", artifacts)
 
+    def test_existing_source_placeholders_are_allowed_but_new_or_rewritten_ones_are_blocked(self):
+        from bosshunter.ai.resume import _find_new_placeholders
+
+        base_resume = "# 候选人\n\n电话：[待填写]\n作品集：{{portfolio_url}}\n"
+
+        self.assertEqual(
+            _find_new_placeholders(
+                "# 候选人\n\n电话：[待填写]\n作品集：{{portfolio_url}}\n",
+                base_resume,
+            ),
+            [],
+        )
+        self.assertEqual(
+            _find_new_placeholders(
+                "# 候选人\n\n电话：[请填写电话]\n作品集：{{portfolio_url}}\n",
+                base_resume,
+            ),
+            ["[请填写电话]"],
+        )
+
+    def test_integrity_checks_report_new_and_missing_fact_values(self):
+        from bosshunter.ai.resume import _find_blocking_integrity_issues
+
+        base_resume = (
+            "# 候选人\n\n"
+            "## 基本信息\n\n"
+            "邮箱：candidate@example.com\n"
+            "## 工作经历\n\n"
+            "负责内容运营。\n"
+        )
+        generated = (
+            "# 候选人\n\n"
+            "## 基本信息\n\n"
+            "## 工作经历\n\n"
+            "负责内容运营，转化率提升 50%。\n"
+        )
+
+        issues = _find_blocking_integrity_issues(generated, base_resume)
+
+        self.assertTrue(any("缺少基础简历中的关键信息" in issue for issue in issues))
+        self.assertTrue(any("candidate@example.com" in issue for issue in issues))
+        self.assertTrue(any("模型新增了原始简历中不存在的数据" in issue for issue in issues))
+        self.assertTrue(any("50%" in issue for issue in issues))
+
+    @patch("bosshunter.ai.resume._render_pdf")
+    @patch("bosshunter.ai.resume._call_claude")
+    @patch("bosshunter.ai.resume.get_db")
+    def test_blocking_validation_failure_is_returned_to_monitor(self, get_db, call_claude, render_pdf):
+        from bosshunter.ai.resume import (
+            RESUME_COMPLETION_MARKER,
+            generate_tailored_resume,
+            get_last_resume_failure_reason,
+        )
+
+        db = Mock()
+        db.execute.return_value.fetchone.return_value = {
+            "id": "job-validation",
+            "company": "Example",
+            "title": "运营",
+            "salary": "10-20K",
+            "jd": "负责内容运营",
+        }
+        get_db.return_value = db
+        call_claude.return_value = (
+            "# 候选人\n\n"
+            "## 基本信息\n\n"
+            "邮箱：candidate@example.com\n"
+            "## 工作经历\n\n"
+            "转化率提升 50%。\n"
+            f"{RESUME_COMPLETION_MARKER}"
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            resume_path = root / "resume.md"
+            resume_path.write_text(
+                "# 候选人\n\n"
+                "## 基本信息\n\n"
+                "邮箱：candidate@example.com\n"
+                "## 工作经历\n\n"
+                "负责内容运营。\n",
+                encoding="utf-8",
+            )
+            result = generate_tailored_resume(
+                "job-validation",
+                {
+                    "profile": {
+                        "resume_path": str(resume_path),
+                        "resume_output_dir": str(root / "out"),
+                    }
+                },
+            )
+
+        self.assertIsNone(result)
+        self.assertIn("事实完整性校验失败", get_last_resume_failure_reason("job-validation"))
+        self.assertIn("50%", get_last_resume_failure_reason("job-validation"))
+        self.assertEqual(call_claude.call_count, 2)
+        render_pdf.assert_not_called()
+
     @patch("bosshunter.ai.resume._render_pdf")
     @patch("bosshunter.ai.resume._call_claude")
     @patch("bosshunter.ai.resume.get_db")

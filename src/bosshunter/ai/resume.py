@@ -1,6 +1,7 @@
 """AI Resume - Generate tailored resume for specific jobs."""
 
 import re
+from collections import Counter
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -119,10 +120,151 @@ ROLE_KEYWORD_GROUPS = [
     },
 ]
 
+PLACEHOLDER_PATTERNS = [
+    re.compile(r"\{\{[^{}\n]{1,100}\}\}"),
+    re.compile(r"\$\{[^{}\n]{1,100}\}"),
+    re.compile(r"\[[^\]\n]{0,80}(?:待填写|待补充|请填写|占位符|placeholder|todo|tbd|xxx)[^\]\n]{0,80}\]", re.I),
+    re.compile(r"<[^<>\n]{0,80}(?:待填写|待补充|请填写|占位符|placeholder|todo|tbd|xxx)[^<>\n]{0,80}>", re.I),
+    re.compile(r"\b(?:TODO|TBD|XXX)\b", re.I),
+    re.compile(r"(?:待填写|待补充|请填写|占位符)(?:[：:][^\s，。；;\n]{0,40})?"),
+]
+
+FACT_TOKEN_PATTERNS = [
+    re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])"),
+    re.compile(r"https?://[^\s)>）】]+", re.I),
+    re.compile(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)"),
+    re.compile(r"(?<!\d)(?:19|20)\d{2}(?:[./年-](?:0?[1-9]|1[0-2]))?(?:[./月-](?:0?[1-9]|[12]\d|3[01]))?(?:日)?(?!\d)"),
+    re.compile(
+        r"(?<![\w.])\d+(?:\.\d+)?(?:\s*[-~至到]\s*\d+(?:\.\d+)?)?\s*"
+        r"(?:%|％|年|个月|月|天|人|次|篇|万|亿|元|K|k|W|w|倍|\+)(?!\w)"
+    ),
+]
+
+_resume_failure_reasons: dict[str, str] = {}
+_last_resume_api_error = ""
+
 
 def _find_resume_artifacts(markdown_text: str) -> list[str]:
     """Find process-disclosure phrases that should not appear in a resume."""
     return [phrase for phrase in RESUME_ARTIFACT_PHRASES if phrase in markdown_text]
+
+
+def _normalize_validation_token(token: str) -> str:
+    return re.sub(r"\s+", "", token).lower()
+
+
+def _extract_validation_tokens(text: str, patterns: list[re.Pattern]) -> list[str]:
+    tokens: list[str] = []
+    for pattern in patterns:
+        tokens.extend(match.group(0).strip() for match in pattern.finditer(text or ""))
+    return tokens
+
+
+def _extract_placeholder_tokens(text: str) -> list[str]:
+    tokens = _extract_validation_tokens(text, PLACEHOLDER_PATTERNS)
+    return [
+        token
+        for token in tokens
+        if not any(token != other and token in other for other in tokens)
+    ]
+
+
+def _find_new_placeholders(markdown_text: str, base_resume: str) -> list[str]:
+    """Return placeholders introduced or rewritten by the model.
+
+    Placeholders already present verbatim in the source resume are an accepted
+    baseline. Rewording one creates a new token and is therefore blocked.
+    """
+    base_counts = Counter(
+        _normalize_validation_token(token)
+        for token in _extract_placeholder_tokens(base_resume)
+    )
+    seen_counts: Counter[str] = Counter()
+    introduced: list[str] = []
+    for token in _extract_placeholder_tokens(markdown_text):
+        normalized = _normalize_validation_token(token)
+        seen_counts[normalized] += 1
+        if seen_counts[normalized] > base_counts[normalized] and token not in introduced:
+            introduced.append(token)
+    return introduced
+
+
+def _find_new_fact_tokens(markdown_text: str, base_resume: str) -> list[str]:
+    """Return fact-sensitive values that do not exist in the source resume."""
+    base_tokens = {
+        _normalize_validation_token(token)
+        for token in _extract_validation_tokens(base_resume, FACT_TOKEN_PATTERNS)
+    }
+    introduced: list[str] = []
+    for token in _extract_validation_tokens(markdown_text, FACT_TOKEN_PATTERNS):
+        normalized = _normalize_validation_token(token)
+        if normalized not in base_tokens and token not in introduced:
+            introduced.append(token)
+    return introduced
+
+
+def _markdown_section(markdown_text: str, heading: str) -> str:
+    pattern = re.compile(
+        rf"(?ms)^\s*{re.escape(heading)}\s*$\n?(.*?)(?=^\s*##\s+|\Z)"
+    )
+    match = pattern.search(markdown_text or "")
+    return match.group(1) if match else ""
+
+
+def _find_missing_core_facts(markdown_text: str, base_resume: str) -> list[str]:
+    """Keep fact-like contact/basic-info values from the source resume."""
+    source_basic_info = _markdown_section(base_resume, "## 基本信息")
+    if not source_basic_info:
+        return []
+    source_tokens = _extract_validation_tokens(source_basic_info, FACT_TOKEN_PATTERNS)
+    generated_keys = {
+        _normalize_validation_token(token)
+        for token in _extract_validation_tokens(markdown_text, FACT_TOKEN_PATTERNS)
+    }
+    return [
+        token
+        for token in source_tokens
+        if _normalize_validation_token(token) not in generated_keys
+    ]
+
+
+def _find_blocking_integrity_issues(
+    markdown_text: str,
+    base_resume: str,
+) -> list[str]:
+    """Return issues that must prevent a resume from being marked ready."""
+    issues: list[str] = []
+
+    missing_core_facts = _find_missing_core_facts(markdown_text, base_resume)
+    if missing_core_facts:
+        issues.append(
+            "事实完整性校验失败：缺少基础简历中的关键信息："
+            + ", ".join(missing_core_facts[:8])
+        )
+
+    new_facts = _find_new_fact_tokens(markdown_text, base_resume)
+    if new_facts:
+        issues.append(
+            "事实完整性校验失败：模型新增了原始简历中不存在的数据："
+            + ", ".join(new_facts[:8])
+        )
+
+    new_placeholders = _find_new_placeholders(markdown_text, base_resume)
+    if new_placeholders:
+        issues.append(
+            "占位符校验失败：模型新增或改写了占位符："
+            + ", ".join(new_placeholders[:8])
+        )
+    return issues
+
+
+def _set_resume_failure_reason(job_id: str, reason: str) -> None:
+    _resume_failure_reasons[str(job_id)] = str(reason).strip() or "未知原因"
+
+
+def get_last_resume_failure_reason(job_id: str) -> str:
+    """Return the latest in-process failure reason for monitor history."""
+    return _resume_failure_reasons.get(str(job_id), "")
 
 
 def _strip_completion_marker(markdown_text: str) -> tuple[str | None, str | None]:
@@ -257,11 +399,14 @@ def _pdf_page_count(pdf_path: Path) -> int | None:
 
 def _call_claude(prompt: str, config: dict) -> str | None:
     """Call Claude API and return response text."""
+    global _last_resume_api_error
+    _last_resume_api_error = ""
     try:
         ai_cfg = config.get("ai", {}) if isinstance(config, dict) else {}
         max_tokens = int(ai_cfg.get("resume_max_tokens") or 8000)
         return call_anthropic_text(prompt, config, max_tokens)
     except Exception as e:
+        _last_resume_api_error = str(e)
         console.print(f"[red]API 调用失败: {e}[/red]")
         return None
 
@@ -353,25 +498,33 @@ def generate_tailored_resume(job_id: str, config: dict) -> Path | None:
 
     Returns path to generated file, or None on failure.
     """
+    global _last_resume_api_error
+    _resume_failure_reasons.pop(str(job_id), None)
+    _last_resume_api_error = ""
     db = get_db()
+
+    def fail(reason: str) -> None:
+        _set_resume_failure_reason(job_id, reason)
+        console.print(f"[red]定制简历生成失败：{reason}[/red]")
+        db.close()
+        return None
 
     # Get job info
     row = db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     if not row:
-        console.print(f"[red]未找到岗位 ID: {job_id}[/red]")
-        db.close()
-        return None
+        return fail(f"未找到岗位 ID：{job_id}")
 
     job = dict(row)
 
     # Load base resume
     resume_path = Path(config.get("profile", {}).get("resume_path", "./resume.md"))
     if not resume_path.exists():
-        console.print("[red]简历文件不存在[/red]")
-        db.close()
-        return None
+        return fail(f"基础简历文件不存在：{resume_path}")
 
-    resume_text = resume_path.read_text(encoding="utf-8")
+    try:
+        resume_text = resume_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return fail(f"无法读取基础简历：{exc}")
     resume_max_pages = _resume_max_pages_from_config(config)
     resume_max_chars = _resume_max_chars_from_config(config, resume_max_pages)
 
@@ -393,15 +546,13 @@ def generate_tailored_resume(job_id: str, config: dict) -> Path | None:
     for attempt in range(2):
         raw_tailored_md = _call_claude(prompt, config)
         if not raw_tailored_md:
-            console.print("[red]生成失败[/red]")
-            db.close()
-            return None
+            if _last_resume_api_error:
+                return fail(f"AI 服务调用失败：{_last_resume_api_error}")
+            return fail("AI 服务未返回简历内容，请检查模型配置或稍后重试")
 
         candidate_md, marker_issue = _strip_completion_marker(raw_tailored_md)
         if not candidate_md:
-            console.print(f"[red]生成结果不完整，已中止: {marker_issue}[/red]")
-            db.close()
-            return None
+            return fail(marker_issue or "生成结果为空")
 
         artifacts = _find_resume_artifacts(candidate_md)
         quality_issues = _find_resume_quality_issues(
@@ -411,10 +562,15 @@ def generate_tailored_resume(job_id: str, config: dict) -> Path | None:
             max_chars=resume_max_chars,
             max_pages=resume_max_pages,
         )
+        blocking_issues = _find_blocking_integrity_issues(
+            candidate_md,
+            resume_text,
+        )
         overlong = any(issue.startswith("简历内容过长") for issue in quality_issues)
-        if attempt == 0 and overlong:
-            issue_text = "; ".join(quality_issues)
-            console.print(f"[yellow]生成结果超过建议篇幅，尝试压缩一次: {issue_text}[/yellow]")
+        if attempt == 0 and (overlong or blocking_issues):
+            retry_issues = [*blocking_issues, *quality_issues]
+            issue_text = "; ".join(dict.fromkeys(retry_issues))
+            console.print(f"[yellow]生成结果校验未通过，尝试修正一次：{issue_text}[/yellow]")
             prompt = RESUME_RETRY_PROMPT.format(
                 base_prompt=base_prompt,
                 quality_issues=issue_text,
@@ -423,6 +579,8 @@ def generate_tailored_resume(job_id: str, config: dict) -> Path | None:
                 completion_marker=RESUME_COMPLETION_MARKER,
             )
             continue
+        if blocking_issues:
+            return fail("；".join(blocking_issues))
 
         delivery_warnings = list(quality_issues)
         if artifacts:
@@ -437,8 +595,7 @@ def generate_tailored_resume(job_id: str, config: dict) -> Path | None:
         break
 
     if not tailored_md:
-        db.close()
-        return None
+        return fail("生成结果未通过校验")
 
     # Determine output directory
     output_dir = Path(config.get("profile", {}).get("resume_output_dir", "./data/resumes"))
@@ -470,6 +627,7 @@ def generate_tailored_resume(job_id: str, config: dict) -> Path | None:
         )
         db.commit()
         db.close()
+        _resume_failure_reasons.pop(str(job_id), None)
         return pdf_path
     else:
         console.print(f"[yellow]PDF 渲染库未安装，已保存为 Markdown: {md_path}[/yellow]")
@@ -480,6 +638,7 @@ def generate_tailored_resume(job_id: str, config: dict) -> Path | None:
         )
         db.commit()
         db.close()
+        _resume_failure_reasons.pop(str(job_id), None)
         return md_path
 
 

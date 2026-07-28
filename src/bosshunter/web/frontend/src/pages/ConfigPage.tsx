@@ -198,6 +198,7 @@ export default function ConfigPage() {
             </div>
             <Field label="发送时间窗口">
               <TagsInput value={config.throttle?.send_windows || ['09:00-16:00']} onChange={v => updateConfig('throttle.send_windows', v)} placeholder="HH:MM-HH:MM" />
+              <p className="mt-1 text-xs text-muted">后台任务会在当天最后一个发送窗口结束时自动停止。</p>
             </Field>
             <Field label="随机休息概率">
               <Input type="number" value={config.throttle?.day_off_probability || 0.05} onChange={e => updateConfig('throttle.day_off_probability', Number(e.target.value))} step={0.01} min={0} max={1} />

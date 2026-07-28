@@ -253,7 +253,23 @@ def get_top_companies(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
 def get_recent_history(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
     """Get recent history entries with job info."""
     rows = conn.execute("""
-        SELECT h.id, h.job_id, h.action, h.detail, h.created_at, j.company, j.title
+        SELECT h.id, h.job_id, h.action, h.detail, h.created_at, j.company, j.title,
+               j.resume_path,
+               CASE
+                 WHEN h.action = 'resume_failed'
+                  AND (
+                    (j.resume_path IS NOT NULL AND TRIM(j.resume_path) != '')
+                    OR EXISTS (
+                      SELECT 1
+                      FROM history r
+                      WHERE r.job_id = h.job_id
+                        AND r.action IN ('needs_resume', 'resume_sent')
+                        AND r.id > h.id
+                    )
+                  )
+                 THEN 1
+                 ELSE 0
+               END AS resolved
         FROM history h
         JOIN jobs j ON h.job_id = j.id
         ORDER BY h.created_at DESC, h.id DESC
@@ -265,7 +281,8 @@ def get_recent_history(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
 def get_unresolved_resume_failures(conn: sqlite3.Connection) -> list[dict]:
     """Get the latest resume generation failure for jobs not resolved by a later success."""
     rows = conn.execute("""
-        SELECT h.id, h.job_id, h.action, h.detail, h.created_at, j.company, j.title
+        SELECT h.id, h.job_id, h.action, h.detail, h.created_at, j.company, j.title,
+               j.resume_path, 0 AS resolved
         FROM history h
         JOIN jobs j ON h.job_id = j.id
         WHERE h.action = 'resume_failed'

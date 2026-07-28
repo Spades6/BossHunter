@@ -336,6 +336,33 @@ class DashboardPageTests(unittest.TestCase):
         self.assertIn("pendingItems", self.source)
         self.assertIn("displayedHistory", self.source)
         self.assertIn("定制简历生成失败，尚无可下载文件", self.source)
+        self.assertIn("系统失败原因", self.source)
+        self.assertIn("parsed.systemReason", self.source)
+        self.assertIn("Boolean(item.resolved || item.resume_path)", self.source)
+        self.assertNotIn("hrText || item.detail || getActionLabel(item.action)", self.source)
+
+    def test_monitor_parses_legacy_resume_failure_text_as_a_system_reason(self):
+        history_detail_source = (
+            ROOT
+            / "src"
+            / "bosshunter"
+            / "web"
+            / "frontend"
+            / "src"
+            / "lib"
+            / "historyDetail.ts"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("item.action === 'resume_failed' ? '' : payloadReply", history_detail_source)
+        self.assertIn(
+            "item.action === 'resume_failed' ? payloadReply : ''",
+            history_detail_source,
+        )
+
+    def test_dashboard_shows_automatic_task_deadline_and_stop_reason(self):
+        self.assertIn("自动截止：", self.source)
+        self.assertIn("visibleTask.deadline_at", self.source)
+        self.assertIn("visibleTask.stop_reason", self.source)
 
 
 class SidebarTests(unittest.TestCase):
