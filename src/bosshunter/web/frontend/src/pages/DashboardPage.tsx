@@ -143,7 +143,11 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
         return
       }
       if (activeTask) {
-        setNotice(`当前正在运行${activeTask.label}，请先点击橙色卡片停止后再启动其他模式。`)
+        setNotice(
+          activeTask.status === 'stopping'
+            ? `当前${activeTask.label}正在停止，请等待后台完全结束后再启动其他模式。`
+            : `当前正在运行${activeTask.label}，请先点击橙色卡片停止后再启动其他模式。`
+        )
         return
       }
       const target = modes.find(item => item.mode === mode)
@@ -341,8 +345,14 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
               <div className="text-xs font-black text-primary">{taskStatusTitle(visibleTask.status)}</div>
               <div className="mt-1 text-lg font-black text-foreground">{currentTaskStage(visibleTask.logs)}</div>
               <div className="mt-1 text-xs font-bold text-muted">任务状态：{taskStatusText(visibleTask.status)}</div>
+              {visibleTask.deadline_at && (
+                <div className="mt-1 text-xs font-bold text-muted">
+                  自动截止：{new Date(visibleTask.deadline_at).toLocaleString('zh-CN', { hour12: false })}
+                </div>
+              )}
             </div>
             {visibleTask.error && <div className="mt-3 rounded-2xl bg-red-50 px-3 py-2 text-sm text-danger">{visibleTask.error}</div>}
+            {visibleTask.stop_reason && <div className="mt-3 rounded-2xl bg-[#FFF0E5] px-3 py-2 text-sm text-primary">{visibleTask.stop_reason}</div>}
           </div>
         )}
       </section>
@@ -597,7 +607,7 @@ function isReplyPendingResolved(item: HistoryItem, history: HistoryItem[]) {
 }
 
 function isResumeFailureResolved(item: HistoryItem, history: HistoryItem[]) {
-  return history.some(candidate =>
+  return Boolean(item.resolved || item.resume_path) || history.some(candidate =>
     candidate.id > item.id
     && sameHistoryJob(item, candidate)
     && (candidate.action === 'needs_resume' || candidate.action === 'resume_sent')
@@ -724,6 +734,7 @@ function MonitorExecutionView({ history, refresh }: { history: HistoryItem[]; re
           const hasGeneratedReply = Boolean(parsed.aiReply) && !isLegacyReplied
           const showReplyContent = canReply || Boolean(parsed.hrQuestion) || hasGeneratedReply || isResumeRequest || isReplied
           const aiReplyText = parsed.aiReply || item.detail || getActionLabel(item.action)
+          const systemFailureReason = parsed.systemReason || (isResumeFailure ? '未获得更具体的错误信息，请查看运行日志。' : '')
           return (
             <div key={`${item.created_at}-${index}`} className="grid gap-3 rounded-2xl border border-card-border bg-[#FFFCFA] p-4 lg:grid-cols-[130px_1fr_160px]">
               <div className="text-xs text-muted">
@@ -734,12 +745,20 @@ function MonitorExecutionView({ history, refresh }: { history: HistoryItem[]; re
                 <div className="font-black">{item.company || '岗位'}｜{item.title || '监测记录'}</div>
                 {showReplyContent ? (
                   <div className="mt-3 space-y-3">
-                    <div>
-                      <div className="text-xs font-black text-primary">{isFollowUp ? '自动跟进说明' : '对方问题 / HR'}</div>
-                      <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-muted">
-                        {isFollowUp ? 'HR 超过设定时间未回复，系统已自动执行一次跟进。' : hrText || item.detail || getActionLabel(item.action)}
-                      </p>
-                    </div>
+                    {(isFollowUp || hrText) && (
+                      <div>
+                        <div className="text-xs font-black text-primary">{isFollowUp ? '自动跟进说明' : '对方问题 / HR'}</div>
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-muted">
+                          {isFollowUp ? 'HR 超过设定时间未回复，系统已自动执行一次跟进。' : hrText}
+                        </p>
+                      </div>
+                    )}
+                    {isResumeFailure && (
+                      <div className="rounded-2xl border border-danger/30 bg-red-50 p-3">
+                        <div className="text-xs font-black text-danger">系统失败原因</div>
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-danger">{systemFailureReason}</p>
+                      </div>
+                    )}
                     {canReply ? (
                       <div>
                         <div className="mb-1 text-xs font-black text-primary">AI 建议回复</div>

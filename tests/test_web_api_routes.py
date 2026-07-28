@@ -3,16 +3,18 @@ import json
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 import yaml
 
 from bosshunter.db import add_history, get_db, insert_job, update_job_score, update_job_status
+from bosshunter.throttle import SendWindowChecker
 from bosshunter.web import server
 from threading import Event
 
-from bosshunter.web.tasks import WorkbenchTask, WorkbenchTaskRunner
+from bosshunter.web.tasks import TaskAlreadyRunningError, WorkbenchTask, WorkbenchTaskRunner
 
 
 def _job(job_id: str) -> dict:
@@ -227,7 +229,7 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertEqual(active["status"], "running")
         self.assertIn("等待前端确认投递", active["logs"])
 
-    def test_task_stop_releases_active_slot_before_executor_returns(self):
+    def test_task_stop_keeps_active_slot_until_executor_really_returns(self):
         # Arrange
         started = Event()
         release = Event()
@@ -247,6 +249,10 @@ class WebApiRouteTests(unittest.TestCase):
             # Act
             stopped = runner.stop(task["id"])
             status_after_stop = runner.status()
+            with self.assertRaises(TaskAlreadyRunningError):
+                runner.start("monitor", {})
+            release.set()
+            runner.wait(timeout=1)
             second_task = runner.start("monitor", {})
             runner.wait(timeout=1)
         finally:
@@ -255,8 +261,53 @@ class WebApiRouteTests(unittest.TestCase):
 
         # Assert
         self.assertEqual(stopped["status"], "stopping")
-        self.assertIsNone(status_after_stop["active"])
+        self.assertEqual(status_after_stop["active"]["id"], task["id"])
+        self.assertEqual(status_after_stop["active"]["status"], "stopping")
         self.assertEqual(second_task["mode"], "monitor")
+
+    def test_task_runner_automatically_stops_at_send_window_deadline(self):
+        # Arrange
+        def wait_for_stop(task, config):
+            task.stop_requested.wait(timeout=1)
+
+        runner = WorkbenchTaskRunner({"monitor": wait_for_stop})
+        deadline = datetime.now() + timedelta(milliseconds=50)
+
+        # Act
+        with patch("bosshunter.web.tasks._deadline_from_config", return_value=deadline):
+            task = runner.start("monitor", {"throttle": {"send_windows": ["09:00-16:00"]}})
+            runner.wait(timeout=1)
+        result = runner.status()["last_task"]
+
+        # Assert
+        self.assertEqual(task["deadline_at"], deadline.isoformat(timespec="seconds"))
+        self.assertEqual(result["status"], "stopped")
+        self.assertTrue(result["stop_requested"])
+        self.assertEqual(result["stop_reason"], "已到发送时间窗口截止时间，后台自动停止")
+        self.assertIn(result["stop_reason"], result["logs"])
+
+    def test_task_runner_does_not_start_after_today_deadline(self):
+        # Arrange
+        executed = Event()
+        runner = WorkbenchTaskRunner({"monitor": lambda task, config: executed.set()})
+        deadline = datetime.now() - timedelta(minutes=1)
+
+        # Act
+        with patch("bosshunter.web.tasks._deadline_from_config", return_value=deadline):
+            task = runner.start("monitor", {"throttle": {"send_windows": ["09:00-16:00"]}})
+
+        # Assert
+        self.assertEqual(task["status"], "stopped")
+        self.assertEqual(task["stop_reason"], "今日发送时间窗口已截止，后台未启动")
+        self.assertFalse(executed.is_set())
+        self.assertIsNone(runner.status()["active"])
+
+    def test_send_window_checker_uses_last_window_end_as_daily_deadline(self):
+        checker = SendWindowChecker(["09:00-12:00", "14:00-17:30", "99:00-100:00"])
+
+        deadline = checker.latest_end_datetime(datetime(2026, 7, 28, 10, 15, 45))
+
+        self.assertEqual(deadline, datetime(2026, 7, 28, 17, 30))
 
     def test_web_api_full_task_completes_when_no_jobs_need_confirmation(self):
         # Arrange
@@ -792,6 +843,59 @@ class WebApiRouteTests(unittest.TestCase):
             {(item["job_id"], item["action"]) for item in payload},
             {("recent-job", "sent"), ("resume-failed-open", "resume_failed")},
         )
+
+    def test_web_api_history_exposes_structured_failure_reason_and_resolution_state(self):
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("resume-failed-detail"))
+                add_history(
+                    db,
+                    "resume-failed-detail",
+                    "resume_failed",
+                    json.dumps(
+                        {
+                            "schema": "resume_failed.v2",
+                            "hr_question": "请发一份简历。",
+                            "ai_reply": "",
+                            "system_reason": "事实完整性校验失败：新增了 50%",
+                            "conversation_tail": [],
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            # Act
+            status, _, body = self._request("/api/history?limit=10&include_unresolved=1")
+            unresolved_item = json.loads(body)[0]
+
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                db.execute(
+                    "UPDATE jobs SET resume_path = ? WHERE id = ?",
+                    ("/tmp/generated.md", "resume-failed-detail"),
+                )
+                db.commit()
+            finally:
+                db.close()
+            _, _, resolved_body = self._request("/api/history?limit=10&include_unresolved=1")
+            resolved_item = json.loads(resolved_body)[0]
+
+        # Assert
+        self.assertTrue(status.startswith("200"), body)
+        self.assertEqual(unresolved_item["detail_payload"]["hr_question"], "请发一份简历。")
+        self.assertEqual(
+            unresolved_item["detail_payload"]["system_reason"],
+            "事实完整性校验失败：新增了 50%",
+        )
+        self.assertFalse(unresolved_item["resolved"])
+        self.assertTrue(resolved_item["resolved"])
+        self.assertEqual(resolved_item["resume_path"], "/tmp/generated.md")
 
 
 if __name__ == "__main__":

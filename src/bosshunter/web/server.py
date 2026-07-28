@@ -82,6 +82,24 @@ def _json_response(data, status_code=200):
 	return json.dumps(data, ensure_ascii=False, default=str)
 
 
+def _serialize_history_items(items):
+	"""Expose structured history details while retaining the legacy detail field."""
+	serialized = []
+	for item in items:
+		record = dict(item)
+		detail = record.get("detail")
+		if isinstance(detail, str) and detail.lstrip().startswith("{"):
+			try:
+				payload = json.loads(detail)
+			except (json.JSONDecodeError, TypeError):
+				payload = None
+			if isinstance(payload, dict):
+				record["detail_payload"] = payload
+		record["resolved"] = bool(record.get("resolved"))
+		serialized.append(record)
+	return serialized
+
+
 def _mask_api_key(key):
 	"""Return a display-safe API key marker."""
 	if not key:
@@ -197,11 +215,13 @@ def _execute_collect(task: WorkbenchTask, config: dict) -> None:
 def _execute_monitor(task: WorkbenchTask, config: dict) -> None:
 	from bosshunter.executor.monitor import monitor_and_send_resumes
 
+	monitor_config = dict(config)
+	monitor_config["_workbench_stop_event"] = task.stop_requested
 	interval_min = int(config.get("monitor", {}).get("interval", 30) or 30)
 	interval_sec = max(interval_min * 60, 1)
 	while not task.stop_requested.is_set():
 		_log(task, "执行一轮监测")
-		monitor_and_send_resumes(config)
+		monitor_and_send_resumes(monitor_config)
 		if task.stop_requested.is_set():
 			return
 		_log(task, f"本轮监测完成，{interval_min} 分钟后再次检查")
@@ -366,7 +386,7 @@ def api_history():
 				key=lambda item: (str(item.get("created_at") or ""), int(item.get("id") or 0)),
 				reverse=True,
 			)
-		return _json_response(data)
+		return _json_response(_serialize_history_items(data))
 	finally:
 		db.close()
 

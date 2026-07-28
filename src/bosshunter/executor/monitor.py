@@ -2,6 +2,7 @@
 
 import time
 import json
+from threading import Event
 
 from rich.console import Console
 
@@ -225,6 +226,12 @@ def _looks_like_resume_request_card(text: str) -> bool:
     return any(kw in text for kw in attachment_signals) and any(kw in text for kw in intent_signals)
 
 
+def _is_short_resume_acknowledgement(text: str) -> bool:
+    """Treat standalone positive HR acknowledgements as resume intent."""
+    normalized = "".join(str(text or "").split()).strip("，,。.!！?？~～…")
+    return normalized in {"好", "好的", "可以"}
+
+
 def _detect_resume_request(messages: list[dict]) -> bool:
     """Check if HR is asking for a resume in messages AFTER user's last reply.
 
@@ -245,6 +252,8 @@ def _detect_resume_request(messages: list[dict]) -> bool:
         if has_rejection:
             continue
         if msg.get("kind") == "resume_request_card" or _looks_like_resume_request_card(text):
+            return True
+        if _is_short_resume_acknowledgement(text):
             return True
         for kw in resume_keywords:
             if kw in text:
@@ -302,6 +311,16 @@ def _build_reply_detail(messages: list[dict], ai_reply: str, schema: str = "repl
             for msg in messages[-6:]
         ],
     }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _build_resume_failure_detail(messages: list[dict], failure_reason: str) -> str:
+    """Build a resume failure payload without mixing system errors into HR text."""
+    payload = json.loads(_build_reply_detail(messages, "", "resume_failed.v2"))
+    payload["system_reason"] = _truncate_text(
+        failure_reason or "定制简历生成失败，未获得更具体的错误信息",
+        2000,
+    )
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -835,8 +854,17 @@ def _handle_conversation(job: dict, config: dict) -> str:
             return "skipped_existing_resume"
 
         # Generate tailored resume, then hand off to user for manual sending
-        from bosshunter.ai.resume import generate_tailored_resume
-        resume_path = generate_tailored_resume(job["id"], config)
+        from bosshunter.ai.resume import generate_tailored_resume, get_last_resume_failure_reason
+
+        resume_failure_reason = ""
+        try:
+            resume_path = generate_tailored_resume(job["id"], config)
+            if not resume_path:
+                resume_failure_reason = get_last_resume_failure_reason(job["id"])
+        except Exception as exc:
+            resume_path = None
+            resume_failure_reason = f"生成过程发生异常：{exc}"
+            console.print(f"[red]    定制简历生成异常：{exc}[/red]")
         if resume_path:
             console.print(f"[bold green]    ✓ 定制简历已生成: {resume_path}[/bold green]")
             console.print(f"[bold yellow]    ⚠ 请手动发送上述简历给 {job['company']} HR[/bold yellow]")
@@ -858,10 +886,9 @@ def _handle_conversation(job: dict, config: dict) -> str:
                 console.print("[dim]    在线简历链接已发过，跳过[/dim]")
 
         if not resume_path:
-            history_detail = _build_reply_detail(
+            history_detail = _build_resume_failure_detail(
                 messages,
-                "定制简历生成失败，未进入待手动发简历列表",
-                "resume_failed.v1",
+                resume_failure_reason or "定制简历生成失败，未获得更具体的错误信息",
             )
             db = get_db()
             add_history(db, job["id"], "resume_failed", history_detail)
@@ -992,6 +1019,11 @@ def _check_follow_ups(config: dict, throttle, replied_job_ids: set | None = None
     """
     from datetime import datetime, timedelta
 
+    stop_event = config.get("_workbench_stop_event")
+    if not isinstance(stop_event, Event):
+        stop_event = None
+    if stop_event and stop_event.is_set():
+        return 0
     follow_up_cfg = config.get("follow_up", {})
     if not follow_up_cfg.get("enabled", False):
         return 0
@@ -1036,6 +1068,8 @@ def _check_follow_ups(config: dict, throttle, replied_job_ids: set | None = None
 
     count = 0
     for job in stale_jobs:
+        if stop_event and stop_event.is_set():
+            break
         if _has_follow_up_history(db, job["id"]):
             console.print(f"[dim]  跟进跳过（已记录过跟进）: {job['company']}[/dim]")
             continue
@@ -1059,7 +1093,8 @@ def _check_follow_ups(config: dict, throttle, replied_job_ids: set | None = None
             console.print(f"[yellow]  ! 跟进失败: {job['company']}[/yellow]")
 
         close_tab(target_id)
-        throttle.wait()
+        if throttle.wait(stop_event):
+            break
 
     db.close()
     return count
@@ -1096,6 +1131,11 @@ def monitor_and_send_resumes(config: dict) -> dict:
     Returns summary dict with counts.
     """
     throttle_config = config.get("throttle", {})
+    stop_event = config.get("_workbench_stop_event")
+    if not isinstance(stop_event, Event):
+        stop_event = None
+    if stop_event and stop_event.is_set():
+        return {"skipped": 0, "replied": 0, "needs_resume": 0, "rejected": 0, "failed": 0}
 
     # Time window check (09:00-16:00)
     window_checker = SendWindowChecker(throttle_config.get("send_windows", ["09:00-16:00"]))
@@ -1122,6 +1162,8 @@ def monitor_and_send_resumes(config: dict) -> dict:
 
         # Step 2: Handle each reply conversation
         for item in replied_conversations:
+            if stop_event and stop_event.is_set():
+                break
             job = item["job"]
             replied_job_ids.add(job["id"])
             action = _handle_conversation(job, config)
@@ -1137,7 +1179,8 @@ def monitor_and_send_resumes(config: dict) -> dict:
             else:
                 summary["failed"] += 1
 
-            throttle.wait()
+            if throttle.wait(stop_event):
+                break
 
         console.print("\n[bold green]═══ 回复处理完成 ═══[/bold green]")
         console.print(f"  跳过(已手动回复): {summary['skipped']}")
