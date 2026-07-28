@@ -226,6 +226,12 @@ def _looks_like_resume_request_card(text: str) -> bool:
     return any(kw in text for kw in attachment_signals) and any(kw in text for kw in intent_signals)
 
 
+def _is_short_resume_acknowledgement(text: str) -> bool:
+    """Treat standalone positive HR acknowledgements as resume intent."""
+    normalized = "".join(str(text or "").split()).strip("，,。.!！?？~～…")
+    return normalized in {"好", "好的", "可以"}
+
+
 def _detect_resume_request(messages: list[dict]) -> bool:
     """Check if HR is asking for a resume in messages AFTER user's last reply.
 
@@ -246,6 +252,8 @@ def _detect_resume_request(messages: list[dict]) -> bool:
         if has_rejection:
             continue
         if msg.get("kind") == "resume_request_card" or _looks_like_resume_request_card(text):
+            return True
+        if _is_short_resume_acknowledgement(text):
             return True
         for kw in resume_keywords:
             if kw in text:

@@ -156,6 +156,81 @@ class MonitorReplyDismissTests(unittest.TestCase):
         self.assertTrue(monitor._has_resume_request_card(messages))
         self.assertFalse(monitor._detect_rejection(messages))
 
+    def test_short_positive_hr_replies_are_treated_as_resume_intent(self):
+        from bosshunter.executor import monitor
+
+        for reply in ("好", "好的！", "可以。"):
+            with self.subTest(reply=reply):
+                messages = [
+                    {"sender": "me", "text": "如果合适，我可以补充发送简历。"},
+                    {"sender": "hr", "text": reply},
+                ]
+                self.assertTrue(monitor._detect_resume_request(messages))
+
+    def test_words_containing_positive_reply_text_are_not_treated_as_resume_intent(self):
+        from bosshunter.executor import monitor
+
+        for reply in ("不可以", "好像可以", "可以接受此工作地点"):
+            with self.subTest(reply=reply):
+                messages = [
+                    {"sender": "me", "text": "您好，我对岗位很感兴趣。"},
+                    {"sender": "hr", "text": reply},
+                ]
+                self.assertFalse(monitor._detect_resume_request(messages))
+
+    def test_short_positive_hr_reply_generates_tailored_resume(self):
+        from bosshunter.executor import monitor
+
+        messages = [
+            {"sender": "me", "text": "如果合适，我可以补充发送简历。"},
+            {"sender": "hr", "text": "可以"},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "data" / "bosshunter.db"
+            generated_resume = Path(tmp) / "tailored.md"
+            generated_resume.write_text("# 定制简历", encoding="utf-8")
+            db = get_db(db_path)
+            try:
+                insert_job(db, _job("job-short-resume-intent"))
+                update_job_status(db, "job-short-resume-intent", "sent")
+            finally:
+                db.close()
+
+            def open_db():
+                return get_db(db_path)
+
+            with patch.object(monitor, "get_db", side_effect=open_db), \
+                 patch.object(monitor, "_open_conversation", return_value="target-1"), \
+                 patch.object(monitor, "evaluate", return_value=json.dumps(messages, ensure_ascii=False)), \
+                 patch.object(monitor, "close_tab"), \
+                 patch.object(monitor, "_send_message_in_chat", return_value=True), \
+                 patch.object(monitor.time, "sleep"), \
+                 patch(
+                     "bosshunter.ai.resume.generate_tailored_resume",
+                     return_value=generated_resume,
+                 ) as generate_resume:
+                action = monitor._handle_conversation(
+                    _job("job-short-resume-intent") | {"status": "sent"},
+                    {"profile": {"portfolio_url": "https://example.com/resume"}},
+                )
+
+            verify_db = get_db(db_path)
+            try:
+                history = [
+                    row["action"]
+                    for row in verify_db.execute(
+                        "SELECT action FROM history WHERE job_id = ? ORDER BY id",
+                        ("job-short-resume-intent",),
+                    ).fetchall()
+                ]
+            finally:
+                verify_db.close()
+
+        self.assertEqual(action, "needs_resume")
+        self.assertEqual(history, ["needs_resume"])
+        generate_resume.assert_called_once()
+
     def test_failed_tailored_resume_generation_does_not_mark_job_needs_resume(self):
         from bosshunter.executor import monitor
 
