@@ -209,6 +209,50 @@ class AiPromptRegressionTests(unittest.TestCase):
 
 
 class PrefilterHardGateTests(unittest.TestCase):
+    def test_anonymous_company_jobs_are_filtered_before_ai_scoring(self):
+        from bosshunter.ai.prefilter import quick_score
+
+        config = {"profile": {"deal_breakers": [], "salary_min": 0}}
+        anonymous_companies = [
+            "某互联网公司",
+            "某500强上市公司",
+            "北京某大型计算机软件上市公司",
+            "上海某大型电子商务公司",
+            "北京某中型企业数字化与AI服务公司",
+        ]
+
+        for company in anonymous_companies:
+            with self.subTest(company=company):
+                score, reason = quick_score(
+                    {
+                        "company": company,
+                        "title": "AI产品经理",
+                        "jd": "",
+                        "salary": "20-30K",
+                    },
+                    config,
+                )
+
+                self.assertEqual(score, 0)
+                self.assertEqual(reason, "匿名公司岗位")
+
+    def test_named_company_jobs_still_pass_anonymous_company_filter(self):
+        from bosshunter.ai.prefilter import quick_score
+
+        config = {"profile": {"deal_breakers": [], "salary_min": 0}}
+        score, reason = quick_score(
+            {
+                "company": "荣耀终端技术有限公司",
+                "title": "AI产品经理",
+                "jd": "",
+                "salary": "20-30K",
+            },
+            config,
+        )
+
+        self.assertEqual(score, 100)
+        self.assertEqual(reason, "预筛通过")
+
     def test_deal_breakers_still_match_title_only(self):
         from bosshunter.ai.prefilter import quick_score
 
