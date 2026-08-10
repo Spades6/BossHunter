@@ -23,6 +23,16 @@ from bosshunter.ai.prefilter import quick_score
 
 console = Console()
 
+def get_scoring_concurrency(config: dict) -> int:
+    """Return a conservative, user-configurable AI scoring worker count."""
+    raw_value = config.get("ai", {}).get("scoring_concurrency", 1)
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        value = 1
+    return max(1, min(value, 3))
+
+
 SCORING_PROMPT = """你是一位严谨的招聘匹配评估员。请只依据简历与岗位JD中明确出现的事实进行评估，不补全、不猜测候选人能力。
 
 ## 候选人简历

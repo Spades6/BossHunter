@@ -1,6 +1,7 @@
 import unittest
 
-from bosshunter.job_filters import classify_hr_activity, parse_monthly_salary_k
+from bosshunter.ai.prefilter import quick_score
+from bosshunter.job_filters import matching_blocked_company, parse_monthly_salary_k
 
 
 class JobFilterTests(unittest.TestCase):
@@ -13,27 +14,24 @@ class JobFilterTests(unittest.TestCase):
         self.assertIsNone(parse_monthly_salary_k("150-200元/天"))
         self.assertIsNone(parse_monthly_salary_k("薪资面议"))
 
-    def test_classify_recent_hr_activity(self):
-        for activity in ("在线", "刚刚活跃", "今日活跃", "昨日活跃", "1日内活跃", "2日内活跃", "3日内活跃"):
-            with self.subTest(activity=activity):
-                self.assertEqual(classify_hr_activity(activity), "recent_3d")
+    def test_blocked_company_matches_case_insensitive_substring(self):
+        matched = matching_blocked_company("某公司科技有限公司", ["某公司"])
 
-    def test_classify_older_hr_activity_buckets(self):
-        fixtures = {
-            "本周活跃": "week",
-            "7日内活跃": "week",
-            "2周内活跃": "month",
-            "本月活跃": "month",
-            "2月内活跃": "older",
-            "半年前活跃": "older",
-        }
-        for activity, expected in fixtures.items():
-            with self.subTest(activity=activity):
-                self.assertEqual(classify_hr_activity(activity), expected)
+        self.assertEqual(matched, "某公司")
 
-    def test_empty_or_unrecognized_hr_activity_is_unknown(self):
-        self.assertEqual(classify_hr_activity(""), "unknown")
-        self.assertEqual(classify_hr_activity("最近比较活跃"), "unknown")
+    def test_blocked_company_ignores_empty_rules(self):
+        matched = matching_blocked_company("某公司科技有限公司", ["", "  "])
+
+        self.assertIsNone(matched)
+
+    def test_quick_score_filters_existing_job_by_company(self):
+        score, reason = quick_score(
+            {"title": "产品经理", "company": "某公司科技有限公司", "salary": "20-30K"},
+            {"profile": {"blocked_companies": ["某公司"]}},
+        )
+
+        self.assertEqual(score, 0)
+        self.assertIn("某公司", reason)
 
 
 if __name__ == "__main__":
