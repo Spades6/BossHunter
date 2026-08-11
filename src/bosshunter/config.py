@@ -143,9 +143,19 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     if config_path.exists():
         with open(config_path, encoding="utf-8") as f:
             user_cfg = yaml.safe_load(f) or {}
-        _deep_merge(cfg, user_cfg)
+        if isinstance(user_cfg, dict):
+            _deep_merge(cfg, user_cfg)
+    _normalize_config_sections(cfg)
     _validate_ai_provider(cfg)
     return cfg
+
+
+def _normalize_config_sections(config: dict[str, Any]) -> dict[str, Any]:
+    """Replace malformed top-level sections with their safe defaults."""
+    for section, defaults in DEFAULTS.items():
+        if isinstance(defaults, dict) and not isinstance(config.get(section), dict):
+            config[section] = _deep_copy_dict(defaults)
+    return config
 
 
 def _validate_ai_provider(config: dict[str, Any]) -> None:
