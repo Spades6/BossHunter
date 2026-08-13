@@ -424,7 +424,7 @@ def _score_job_with_ai(
         return outcome
 
     ai_cfg = config.get("ai", {}) if isinstance(config.get("ai"), dict) else {}
-    review_enabled = ai_cfg.get("scoring_second_review", True) is not False
+    review_enabled = ai_cfg.get("scoring_second_review", False) is True
     if not review_enabled or not first.structured or not 68 <= first.score <= 79:
         return outcome
 
@@ -447,9 +447,8 @@ def score_jobs(
     config: dict,
     *,
     rescore_filtered: bool = False,
-    job_ids: list[str] | None = None,
 ) -> tuple[int, int]:
-    """Score pending jobs with concurrent AI calls and main-thread database writes."""
+    """Score every unscored pending job; previously scored jobs keep their result."""
     db = get_db()
     try:
         resume = _load_resume(config)
@@ -463,9 +462,6 @@ def score_jobs(
 
         threshold = config.get("scoring", {}).get("threshold", 60)
         pending_jobs = get_jobs_by_status(db, "pending")
-        if job_ids is not None:
-            allowed_job_ids = set(job_ids)
-            pending_jobs = [job for job in pending_jobs if job["id"] in allowed_job_ids]
         if not pending_jobs:
             console.print("[yellow]没有待评分的岗位[/yellow]")
             return 0, 0
@@ -475,10 +471,7 @@ def score_jobs(
             max_attempts = max(1, min(int(ai_cfg.get("scoring_max_attempts", 2) or 2), 3))
         except (TypeError, ValueError):
             max_attempts = 2
-        try:
-            concurrency = max(1, min(int(ai_cfg.get("scoring_concurrency", 1) or 1), 5))
-        except (TypeError, ValueError):
-            concurrency = 1
+        concurrency = get_scoring_concurrency(config)
         stop_event = config.get("_workbench_stop_event")
         scored = 0
         filtered = 0

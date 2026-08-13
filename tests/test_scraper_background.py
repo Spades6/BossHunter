@@ -36,8 +36,7 @@ class ScraperBackgroundTests(unittest.TestCase):
             collected_job_ids.extend(["new-1", "new-2", "new-3"])
             return 3
 
-        def score_with_progress(score_config, *, job_ids=None):
-            self.assertEqual(job_ids, ["new-1", "new-2", "new-3"])
+        def score_with_progress(score_config):
             score_config["_workbench_score_progress"]({
                 "completed": 3,
                 "total": 3,

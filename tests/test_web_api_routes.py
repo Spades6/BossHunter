@@ -505,7 +505,6 @@ class WebApiRouteTests(unittest.TestCase):
                 "/api/jobs/search?min_score=not-a-number",
                 "/api/jobs/search?salary_min=14&salary_max=7",
                 "/api/jobs/search?limit=0",
-                "/api/jobs/search?hr_activity=recent",
                 "/api/jobs/search?created_within=30d",
             ]
 
@@ -514,41 +513,6 @@ class WebApiRouteTests(unittest.TestCase):
                 self.assertTrue(status.startswith("400"), body)
                 self.assertIn("application/json", headers["Content-Type"])
                 self.assertIn("error", json.loads(body))
-
-    def test_job_search_filters_hr_activity_categories(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base_dir = Path(tmp)
-            db = get_db(base_dir / "data" / "bosshunter.db")
-            try:
-                fixtures = {
-                    "recent": "3日内活跃",
-                    "week": "本周活跃",
-                    "month": "2周内活跃",
-                    "older": "半年前活跃",
-                    "unknown": "",
-                }
-                for job_id, activity in fixtures.items():
-                    job = _job(job_id)
-                    job["hr_active"] = activity
-                    insert_job(db, job)
-            finally:
-                db.close()
-            server.set_base_dir(base_dir)
-
-            for category, expected_id in (
-                ("recent_3d", "recent"),
-                ("week", "week"),
-                ("month", "month"),
-                ("older", "older"),
-                ("unknown", "unknown"),
-            ):
-                with self.subTest(category=category):
-                    status, _, body = self._request(f"/api/jobs/search?hr_activity={category}")
-                    payload = json.loads(body)
-                    self.assertTrue(status.startswith("200"), body)
-                    self.assertEqual([job["id"] for job in payload["items"]], [expected_id])
-                    self.assertEqual(payload["total"], 1)
-                    self.assertEqual(payload["all_total"], 5)
 
     def test_legacy_jobs_endpoint_still_returns_an_array(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -342,52 +342,6 @@ class PrefilterHardGateTests(unittest.TestCase):
         self.assertEqual(score, 0)
         self.assertEqual(reason, "薪资低于硬性要求: 12K < 100K")
 
-    def test_known_hr_activity_older_than_three_days_is_filtered(self):
-        from bosshunter.ai.prefilter import quick_score
-
-        config = {
-            "profile": {"deal_breakers": [], "salary_min": 0},
-            "scoring": {"require_recent_hr_activity": True, "allow_unknown_hr_activity": True},
-        }
-        job = {"title": "客户成功顾问", "jd": "", "salary": "10-15K", "hr_active": "本周活跃"}
-
-        score, reason = quick_score(job, config)
-
-        self.assertEqual(score, 0)
-        self.assertEqual(reason, "招聘者不符合近3日活跃要求: 本周活跃")
-
-    def test_recent_and_unknown_hr_activity_passes_prefilter(self):
-        from bosshunter.ai.prefilter import quick_score
-
-        config = {
-            "profile": {"deal_breakers": [], "salary_min": 0},
-            "scoring": {"require_recent_hr_activity": True, "allow_unknown_hr_activity": True},
-        }
-        for activity in ("刚刚活跃", "今日活跃", "3日内活跃", "", "最近比较活跃"):
-            with self.subTest(activity=activity):
-                score, reason = quick_score(
-                    {"title": "客户成功顾问", "jd": "", "salary": "10-15K", "hr_active": activity},
-                    config,
-                )
-                self.assertEqual(score, 100)
-                self.assertEqual(reason, "预筛通过")
-
-    def test_unknown_hr_activity_is_filtered_when_not_allowed(self):
-        from bosshunter.ai.prefilter import quick_score
-
-        config = {
-            "profile": {"deal_breakers": [], "salary_min": 0},
-            "scoring": {"require_recent_hr_activity": True, "allow_unknown_hr_activity": False},
-        }
-
-        score, reason = quick_score(
-            {"title": "客户成功顾问", "jd": "", "salary": "10-15K", "hr_active": ""},
-            config,
-        )
-
-        self.assertEqual(score, 0)
-        self.assertEqual(reason, "招聘者不符合近3日活跃要求: 活跃度未知")
-
     def test_passing_job_returns_hard_gate_pass(self):
         from bosshunter.ai.prefilter import quick_score
 
@@ -517,9 +471,7 @@ class DashboardPageTests(unittest.TestCase):
         self.assertIn("最低薪资", filter_source)
         self.assertIn("最高薪资", filter_source)
         self.assertIn("全部状态", filter_source)
-        self.assertIn("招聘者活跃度", filter_source)
-        self.assertIn("近3日（含刚刚/今日）", filter_source)
-        self.assertIn("活跃度未知", filter_source)
+        self.assertNotIn("招聘者活跃度", filter_source)
         self.assertIn("采集时间：全部", filter_source)
         self.assertIn("近 3 天", filter_source)
         self.assertIn("近 7 天", filter_source)

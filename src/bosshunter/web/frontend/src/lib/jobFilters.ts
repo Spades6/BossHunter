@@ -7,7 +7,6 @@ export interface JobFilters {
   salaryMin: string
   salaryMax: string
   status: string
-  hrActivity: string
   createdWithin: string
 }
 
@@ -17,7 +16,6 @@ export const EMPTY_JOB_FILTERS: JobFilters = {
   salaryMin: '',
   salaryMax: '',
   status: '',
-  hrActivity: '',
   createdWithin: '',
 }
 
@@ -54,28 +52,6 @@ function parseMonthlySalaryK(salary: string): [number, number] | null {
     return [value, value]
   }
   return null
-}
-
-export function classifyHrActivity(activity: string) {
-  const normalized = (activity || '').trim()
-  if (!normalized) return 'unknown'
-  if (['在线', '刚刚', '今日', '昨日'].some(keyword => normalized.includes(keyword))) return 'recent_3d'
-
-  const dayMatch = normalized.match(/(\d+)\s*日内活跃/)
-  if (dayMatch) {
-    const days = Number(dayMatch[1])
-    if (days <= 3) return 'recent_3d'
-    if (days <= 7) return 'week'
-    if (days <= 31) return 'month'
-    return 'older'
-  }
-  if (normalized.includes('本周活跃')) return 'week'
-
-  const weekMatch = normalized.match(/(\d+)\s*周内活跃/)
-  if (weekMatch) return Number(weekMatch[1]) <= 1 ? 'week' : 'month'
-  if (normalized.includes('本月活跃')) return 'month'
-  if (/\d+\s*月内活跃/.test(normalized) || normalized.includes('年前活跃') || normalized.includes('半年前活跃')) return 'older'
-  return 'unknown'
 }
 
 function parseCreatedAt(createdAt: string) {
@@ -120,7 +96,6 @@ export function filterJobs(jobs: Job[], filters: JobFilters) {
     }
     if (minimumScore !== null && Number(job.score || 0) < minimumScore) return false
     if (filters.status && job.status !== filters.status) return false
-    if (filters.hrActivity && classifyHrActivity(job.hr_active || '') !== filters.hrActivity) return false
     if (salaryEnabled) {
       const salaryRange = parseMonthlySalaryK(job.salary || '')
       if (!salaryRange) return false

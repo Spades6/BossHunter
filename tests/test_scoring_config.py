@@ -5,16 +5,16 @@ from bosshunter.ai.scorer import get_scoring_concurrency
 
 
 class ScoringConfigTests(unittest.TestCase):
-    def test_default_scoring_concurrency_is_three(self):
+    def test_default_scoring_concurrency_is_one(self):
         config = load_config()
 
-        self.assertEqual(config["ai"]["scoring_concurrency"], 3)
-        self.assertEqual(get_scoring_concurrency(config), 3)
+        self.assertEqual(config["ai"]["scoring_concurrency"], 1)
+        self.assertEqual(get_scoring_concurrency(config), 1)
 
-    def test_scoring_concurrency_is_clamped_to_one_through_five(self):
+    def test_scoring_concurrency_is_clamped_to_one_through_three(self):
         self.assertEqual(get_scoring_concurrency({"ai": {"scoring_concurrency": 0}}), 1)
-        self.assertEqual(get_scoring_concurrency({"ai": {"scoring_concurrency": 99}}), 5)
-        self.assertEqual(get_scoring_concurrency({"ai": {"scoring_concurrency": "invalid"}}), 3)
+        self.assertEqual(get_scoring_concurrency({"ai": {"scoring_concurrency": 99}}), 3)
+        self.assertEqual(get_scoring_concurrency({"ai": {"scoring_concurrency": "invalid"}}), 1)
 
 
 if __name__ == "__main__":

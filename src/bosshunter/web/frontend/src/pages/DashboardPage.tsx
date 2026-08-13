@@ -876,7 +876,7 @@ function JobsPoolView() {
 
   useEffect(() => {
     setPage(0)
-  }, [filters.query, filters.minScore, filters.salaryMin, filters.salaryMax, filters.status, filters.hrActivity, filters.createdWithin])
+  }, [filters.query, filters.minScore, filters.salaryMin, filters.salaryMax, filters.status, filters.createdWithin])
 
   return (
     <div className="rounded-3xl border border-card-border bg-white p-5">

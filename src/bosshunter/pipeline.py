@@ -38,7 +38,7 @@ def run_pipeline(config: dict) -> None:
     # Step 3: AI scoring (with pre-filter)
     console.print("[bold]Step 3/6: AI 评分筛选[/bold]")
     from bosshunter.ai.scorer import score_jobs
-    scored, filtered = score_jobs(config, job_ids=collected_job_ids)
+    scored, filtered = score_jobs(config)
     if scored == 0 and count > 0:
         console.print("[yellow]  ! 没有通过评分的岗位，流程结束[/yellow]")
         return

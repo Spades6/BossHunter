@@ -179,7 +179,10 @@ class ScorerTokenResilienceTests(unittest.TestCase):
             patch("bosshunter.ai.scorer.update_job_status"),
         ):
             scored, filtered = scorer.score_jobs(
-                {"ai": {"scoring_concurrency": 1}, "scoring": {"threshold": 71}}
+                {
+                    "ai": {"scoring_concurrency": 1, "scoring_second_review": True},
+                    "scoring": {"threshold": 71},
+                }
             )
 
         self.assertEqual((scored, filtered), (1, 0))
@@ -272,7 +275,7 @@ class ScorerTokenResilienceTests(unittest.TestCase):
 
         db.close.assert_called_once()
 
-    def test_scoring_can_be_limited_to_current_run_job_ids(self):
+    def test_scoring_processes_all_unscored_pending_jobs(self):
         db = MagicMock()
         old_job = _job("old")
         new_job = _job("new")
@@ -292,12 +295,14 @@ class ScorerTokenResilienceTests(unittest.TestCase):
         ):
             scored, filtered = scorer.score_jobs(
                 {"scoring": {"threshold": 70}},
-                job_ids=["new"],
             )
 
-        self.assertEqual((scored, filtered), (1, 0))
-        self.assertEqual(call_ai.call_count, 1)
-        update_quick_score.assert_called_once_with(db, "new", 80)
+        self.assertEqual((scored, filtered), (2, 0))
+        self.assertEqual(call_ai.call_count, 2)
+        self.assertEqual(
+            [item.args for item in update_quick_score.call_args_list],
+            [(db, "old", 80), (db, "new", 80)],
+        )
 
     def test_invalid_score_json_retries_and_reports_progress(self):
         db = MagicMock()

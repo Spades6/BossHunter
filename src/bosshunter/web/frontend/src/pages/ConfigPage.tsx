@@ -207,8 +207,12 @@ export default function ConfigPage() {
               <TagsInput value={config.profile?.deal_breakers || []} onChange={v => updateConfig('profile.deal_breakers', v)} placeholder="如：外包、996" />
             </Field>
             <Field label="JD 排除关键词">
-              <TagsInput value={config.profile?.jd_deal_breakers || []} onChange={v => updateConfig('profile.jd_deal_breakers', v)} placeholder="如：SQL、Linux" />
+              <TagsInput value={config.profile?.jd_deal_breakers || []} onChange={v => updateConfig('profile.jd_deal_breakers', v)} placeholder="如：需频繁出差、纯销售" />
               <p className="mt-1 text-xs text-muted">完整 JD 含这些词时会在 AI 评分前跳过。</p>
+            </Field>
+            <Field label="屏蔽公司">
+              <TagsInput value={config.profile?.blocked_companies || []} onChange={v => updateConfig('profile.blocked_companies', v)} placeholder="输入公司名称或关键词" />
+              <p className="mt-1 text-xs text-muted">公司名包含这些词时不采集，也不会进入 AI 评分。</p>
             </Field>
             <div className="flex items-center justify-between">
               <label className="text-xs text-foreground">接受实习/管培岗位</label>
@@ -260,14 +264,6 @@ export default function ConfigPage() {
             <Field label="每轮最大候选数">
               <Input type="number" value={config.scoring?.max_candidates || 20} onChange={e => updateConfig('scoring.max_candidates', Number(e.target.value))} min={1} max={100} />
             </Field>
-            <div className="flex items-center justify-between rounded-lg border border-card-border bg-[#FFFCFA] p-3">
-              <label className="text-xs text-foreground">仅评分近3日活跃招聘者</label>
-              <Switch checked={config.scoring?.require_recent_hr_activity ?? true} onChange={v => updateConfig('scoring.require_recent_hr_activity', v)} />
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-card-border bg-[#FFFCFA] p-3">
-              <label className="text-xs text-foreground">活跃度未知时保留</label>
-              <Switch checked={config.scoring?.allow_unknown_hr_activity ?? true} onChange={v => updateConfig('scoring.allow_unknown_hr_activity', v)} />
-            </div>
           </div>
         </SectionCard>
 
@@ -376,6 +372,22 @@ export default function ConfigPage() {
                 max={600}
               />
             </Field>
+            <Field label="AI 评分并发数">
+              <Select
+                value={String(config.ai?.scoring_concurrency || 1)}
+                onChange={e => updateConfig('ai.scoring_concurrency', Number(e.target.value))}
+              >
+                {[1, 2, 3].map(value => <option key={value} value={value}>{value}</option>)}
+              </Select>
+              <p className="mt-1 text-xs text-muted">默认 1；提高并发会增加 API 限流风险。</p>
+            </Field>
+            <div className="flex items-center justify-between rounded-lg border border-card-border bg-[#FFFCFA] p-3">
+              <div>
+                <label className="text-xs font-bold text-foreground">临界评分二次复核</label>
+                <p className="mt-1 text-xs text-muted">默认关闭；开启后会增加 AI 调用次数。</p>
+              </div>
+              <Switch checked={config.ai?.scoring_second_review ?? false} onChange={v => updateConfig('ai.scoring_second_review', v)} />
+            </div>
             <div className="rounded-2xl border border-card-border bg-[#FFFCFA] p-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>

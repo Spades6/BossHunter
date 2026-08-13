@@ -79,14 +79,6 @@ export function JobFilterBar({
             ))}
           </Select>
         )}
-        <Select className="min-w-0" value={filters.hrActivity} onChange={event => update('hrActivity', event.target.value)} aria-label="招聘者活跃度">
-          <option value="">招聘者活跃度：全部</option>
-          <option value="recent_3d">近3日（含刚刚/今日）</option>
-          <option value="week">本周活跃</option>
-          <option value="month">本月活跃</option>
-          <option value="older">更早活跃</option>
-          <option value="unknown">活跃度未知</option>
-        </Select>
         <div className="flex min-h-9 min-w-0 flex-wrap items-center justify-between gap-2 rounded-md border border-card-border bg-white px-3 py-1">
           <span className="whitespace-nowrap text-xs font-bold text-muted">筛选结果 {resultCount} / 总数 {totalCount}</span>
           <Button

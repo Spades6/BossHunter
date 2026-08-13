@@ -37,7 +37,6 @@ export function useJobSearch(filters: JobFilters, page: number, pageSize: number
     if (filters.salaryMin) params.set('salary_min', filters.salaryMin)
     if (filters.salaryMax) params.set('salary_max', filters.salaryMax)
     if (filters.status) params.set('status', filters.status)
-    if (filters.hrActivity) params.set('hr_activity', filters.hrActivity)
     if (filters.createdWithin) params.set('created_within', filters.createdWithin)
 
     setLoading(true)
@@ -62,7 +61,7 @@ export function useJobSearch(filters: JobFilters, page: number, pageSize: number
       })
 
     return () => controller.abort()
-  }, [debouncedQuery, filters.minScore, filters.salaryMin, filters.salaryMax, filters.status, filters.hrActivity, filters.createdWithin, page, pageSize])
+  }, [debouncedQuery, filters.minScore, filters.salaryMin, filters.salaryMax, filters.status, filters.createdWithin, page, pageSize])
 
   return { items, total, allTotal, loading, error }
 }

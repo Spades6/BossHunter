@@ -36,7 +36,7 @@ from bosshunter.db import (
 	get_top_companies,
 	update_job_status,
 )
-from bosshunter.job_filters import HR_ACTIVITY_CATEGORIES, classify_hr_activity, parse_monthly_salary_k
+from bosshunter.job_filters import parse_monthly_salary_k
 from bosshunter.web.preflight import check_ai_connection, collect_preflight_checks, error_messages
 from bosshunter.web.resume_upload import ResumeUploadError, prepare_resume_content
 from bosshunter.web.tasks import TaskAlreadyRunningError, WorkbenchTask, WorkbenchTaskRunner
@@ -258,12 +258,12 @@ def _execute_collect(task: WorkbenchTask, config: dict) -> None:
 		task,
 		f"本轮采集完成：扫描 {task.metrics.get('collect_seen', 0)}，新增 {task.metrics.get('collect_new', 0)}，重复 {task.metrics.get('collect_duplicate', 0)}",
 	)
-	_log(task, f"开始 AI 评分：仅处理本轮新增 {len(collected_job_ids)} 个岗位")
+	_log(task, f"开始 AI 评分：处理全部未评分岗位（本轮新增 {len(collected_job_ids)} 个）")
 	score_config = dict(config)
 	score_config["_workbench_stop_event"] = task.stop_requested
 	score_config["_workbench_log"] = lambda message: _log(task, message)
 	score_config["_workbench_score_progress"] = lambda state: _record_score_progress(task, state)
-	score_jobs(score_config, job_ids=collected_job_ids)
+	score_jobs(score_config)
 
 
 def _execute_rescore(task: WorkbenchTask, config: dict) -> None:
@@ -641,9 +641,6 @@ def api_job_search():
 		offset = _integer_param("offset", 0, minimum=0)
 		if salary_min is not None and salary_max is not None and salary_min > salary_max:
 			raise ValueError("最低薪资不能高于最高薪资")
-		activity_filter = request.params.get("hr_activity", "").strip()
-		if activity_filter and activity_filter not in HR_ACTIVITY_CATEGORIES:
-			raise ValueError("hr_activity 参数无效")
 		created_within = request.params.get("created_within", "").strip()
 		if created_within and created_within not in {"today", "3d", "7d"}:
 			raise ValueError("created_within 参数无效")
@@ -692,9 +689,6 @@ def api_job_search():
 					continue
 				filtered_rows.append(row)
 			rows = filtered_rows
-		if activity_filter:
-			rows = [row for row in rows if classify_hr_activity(row.get("hr_active", "")) == activity_filter]
-
 		total = len(rows)
 		return _json_response({
 			"items": rows[offset:offset + limit],
