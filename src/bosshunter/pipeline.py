@@ -28,7 +28,8 @@ def run_pipeline(config: dict) -> None:
     console.print("[bold]Step 2/6: 采集岗位[/bold]")
     from bosshunter.scraper.jobs import scrape_jobs
     keywords = config["search"]["keywords"]
-    count = scrape_jobs(config, keywords)
+    collected_job_ids: list[str] = []
+    count = scrape_jobs(config, keywords, collected_job_ids=collected_job_ids)
     if count == 0:
         console.print("[yellow]  ! 未采集到新岗位，尝试继续处理已有岗位...[/yellow]")
     else:

@@ -70,11 +70,13 @@ DEFAULTS: dict[str, Any] = {
         "salary_max": 0,
         "allow_internship": False,
         "deal_breakers": [],
-        "allow_internship": False,
+        "jd_deal_breakers": [],
+        "blocked_companies": [],
     },
     "search": {
         "keywords": [],
         "cities": [],  # Empty = fallback to profile.target_cities
+        "city_codes": {},
         "max_pages": 3,
     },
     "scoring": {
@@ -100,6 +102,8 @@ DEFAULTS: dict[str, Any] = {
         "timeout_seconds": 180,
         "scoring_max_tokens": 8192,
         "scoring_max_attempts": 2,
+        "scoring_concurrency": 1,
+        "scoring_second_review": False,
         "greeting_max_tokens": 8192,
         "greeting_review_max_tokens": 4096,
         "greeting_max_attempts": 2,
@@ -140,9 +144,19 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     if config_path.exists():
         with open(config_path, encoding="utf-8") as f:
             user_cfg = yaml.safe_load(f) or {}
-        _deep_merge(cfg, user_cfg)
+        if isinstance(user_cfg, dict):
+            _deep_merge(cfg, user_cfg)
+    _normalize_config_sections(cfg)
     _validate_ai_provider(cfg)
     return cfg
+
+
+def _normalize_config_sections(config: dict[str, Any]) -> dict[str, Any]:
+    """Replace malformed top-level sections with their safe defaults."""
+    for section, defaults in DEFAULTS.items():
+        if isinstance(defaults, dict) and not isinstance(config.get(section), dict):
+            config[section] = _deep_copy_dict(defaults)
+    return config
 
 
 def _validate_ai_provider(config: dict[str, Any]) -> None:

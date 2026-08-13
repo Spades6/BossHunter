@@ -10,7 +10,8 @@ profile:
   salary_max: 25  # K
   allow_internship: false
   deal_breakers: ["外包", "996"]
-  allow_internship: false
+  jd_deal_breakers: []  # 示例：需要排除完整 JD 中的词时再填写
+  blocked_companies: [] # 示例：不希望采集的公司名称或关键词
   # 可选：个人亮点（用于招呼语生成）
   extra_highlights:
     - "你的核心竞争力描述"
@@ -20,6 +21,7 @@ profile:
 search:
   keywords: ["关键词1", "关键词2"]
   cities: ["北京"]
+  city_codes: {}  # 自定义城市名称 -> 平台城市编码，由配置页自动填写
   max_pages: 5
   sort: newest
 
@@ -47,6 +49,8 @@ ai:
   timeout_seconds: 180
   scoring_max_tokens: 8192
   scoring_max_attempts: 2
+  scoring_concurrency: 1          # AI评分并发数，范围1-3；数据库仍串行写入
+  scoring_second_review: false    # 可选：对68-79分临界岗位进行一次独立复核
   greeting_max_tokens: 8192
   greeting_review_max_tokens: 4096
   greeting_max_attempts: 2
