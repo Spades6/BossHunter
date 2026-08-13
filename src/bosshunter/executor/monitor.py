@@ -1081,7 +1081,7 @@ def _row_text(row, key: str) -> str:
 def _has_generated_resume_for_job(db, job_id: str) -> bool:
     """Return true when this job already has a generated resume/request result."""
     row = db.execute(
-        "SELECT status, resume_path FROM jobs WHERE id = ?",
+        "SELECT status, resume_path FROM jobs WHERE id = ? AND deleted_at IS NULL",
         (job_id,),
     ).fetchone()
     status = _row_text(row, "status")

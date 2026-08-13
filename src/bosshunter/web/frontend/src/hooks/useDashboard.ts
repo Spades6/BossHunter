@@ -30,6 +30,8 @@ interface Job {
   url: string
   created_at: string
   updated_at?: string
+  deleted_at?: string | null
+  deleted_reason?: string | null
   resume_path?: string
   last_error?: string
 }

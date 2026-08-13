@@ -79,7 +79,7 @@ def _normalize_export_ids(job_ids: Iterable[Any] | None) -> list[str]:
 
 def _filtered_rows(conn: sqlite3.Connection, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
 	filters = filters or {}
-	conditions: list[str] = []
+	conditions: list[str] = ["deleted_at IS NULL"]
 	params: list[Any] = []
 	keyword = str(filters.get("q") or filters.get("query") or "").strip()
 	if keyword:
@@ -160,7 +160,7 @@ def _selected_rows(
 		raise ValueError("所选岗位不能为空")
 	placeholders = ",".join("?" for _ in ids)
 	rows = [dict(row) for row in conn.execute(
-		f"SELECT * FROM jobs WHERE id IN ({placeholders}) ORDER BY created_at DESC, score DESC",
+		f"SELECT * FROM jobs WHERE deleted_at IS NULL AND id IN ({placeholders}) ORDER BY created_at DESC, score DESC",
 		ids,
 	).fetchall()]
 	found = {str(row["id"]) for row in rows}

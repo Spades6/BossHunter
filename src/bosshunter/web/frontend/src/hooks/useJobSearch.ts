@@ -17,6 +17,7 @@ export function useJobSearch(filters: JobFilters, page: number, pageSize: number
   const [allTotal, setAllTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [revision, setRevision] = useState(0)
 
   useEffect(() => {
     if (hasInvalidSalaryRange(filters)) {
@@ -61,7 +62,7 @@ export function useJobSearch(filters: JobFilters, page: number, pageSize: number
       })
 
     return () => controller.abort()
-  }, [debouncedQuery, filters.minScore, filters.salaryMin, filters.salaryMax, filters.status, filters.createdWithin, page, pageSize])
+  }, [debouncedQuery, filters.minScore, filters.salaryMin, filters.salaryMax, filters.status, filters.createdWithin, page, pageSize, revision])
 
-  return { items, total, allTotal, loading, error }
+  return { items, total, allTotal, loading, error, refresh: () => setRevision(value => value + 1) }
 }
