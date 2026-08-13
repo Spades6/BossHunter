@@ -14,6 +14,7 @@ from bosshunter.throttle import SendWindowChecker
 MODE_LABELS = {
     "full": "运行全流程",
     "collect": "单独采集",
+    "score": "单独 AI 评分",
     "rescore": "重新评分",
     "monitor": "单独监测",
     "deliver": "确认投递",

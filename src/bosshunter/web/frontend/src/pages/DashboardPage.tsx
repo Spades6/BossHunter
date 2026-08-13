@@ -4,6 +4,7 @@ import { useJobSearch } from '@/hooks/useJobSearch'
 import { Button } from '@/components/ui/button'
 import { JobsTable } from '@/components/dashboard/JobsTable'
 import { RecycleBinPanel } from '@/components/dashboard/RecycleBinPanel'
+import { ScoreJobsDialog } from '@/components/dashboard/ScoreJobsDialog'
 import { JobFilterBar } from '@/components/jobs/JobFilterBar'
 import { parseHistoryDetail } from '@/lib/historyDetail'
 import {
@@ -877,6 +878,7 @@ function JobsPoolView() {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [notice, setNotice] = useState('')
   const [showRecycleBin, setShowRecycleBin] = useState(false)
+  const [showScoreDialog, setShowScoreDialog] = useState(false)
   const [recycleJobs, setRecycleJobs] = useState<Job[]>([])
   const [recycleSelectedIds, setRecycleSelectedIds] = useState<string[]>([])
   const [recycleLoading, setRecycleLoading] = useState(false)
@@ -1035,6 +1037,25 @@ function JobsPoolView() {
     }
   }
 
+  const startScoring = async (options: {
+    scope: 'pending' | 'failed' | 'selected' | 'all_scored'
+    limit: number | null
+    job_ids: string[]
+    force_rescore: boolean
+  }) => {
+    const res = await fetch('/api/scoring/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ options }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const checks = Array.isArray(data.messages) ? data.messages.join('；') : ''
+      throw new Error([data.error || '启动评分失败', checks].filter(Boolean).join('：'))
+    }
+    setNotice(`独立评分已启动，共 ${data.run?.remaining_job_ids?.length || 0} 个岗位。`)
+  }
+
   if (showRecycleBin) {
     return (
       <div className="space-y-3">
@@ -1093,6 +1114,7 @@ function JobsPoolView() {
         <span className="rounded-full bg-[#FFF0E5] px-3 py-2 font-bold text-primary">已选择 {selectedIds.length} 条</span>
         {selectedIds.length > 0 && <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>清空选择</Button>}
         <Button variant="destructive" size="sm" disabled={!selectedIds.length} onClick={() => void softDelete(selectedIds)}>移入回收站</Button>
+        <Button size="sm" onClick={() => setShowScoreDialog(true)}>单独 AI 评分</Button>
         <ExportMenu onExport={exportJobs} hasSelection={selectedIds.length > 0} hasFiltered={total > 0} />
       </div>
       {notice && <div className="mb-4 rounded-xl bg-[#FFF0E5] px-4 py-3 text-sm text-primary">{notice}</div>}
@@ -1107,6 +1129,12 @@ function JobsPoolView() {
         onToggleSelected={toggleSelected}
         onSoftDelete={job => void softDelete([job.id])}
         loading={loading}
+      />
+      <ScoreJobsDialog
+        open={showScoreDialog}
+        selectedJobIds={selectedIds}
+        onClose={() => setShowScoreDialog(false)}
+        onStart={startScoring}
       />
     </div>
   )

@@ -15,6 +15,7 @@ from copy import deepcopy
 from pathlib import Path
 from socketserver import ThreadingMixIn
 from threading import Event, Lock
+from uuid import uuid4
 from wsgiref.simple_server import WSGIServer
 
 import yaml
@@ -47,6 +48,14 @@ from bosshunter.db import (
 )
 from bosshunter.job_filters import parse_monthly_salary_k
 from bosshunter.job_export import InvalidJobSelectionError, export_jobs, export_row_count
+from bosshunter.scoring_run_store import (
+	create_scoring_run,
+	get_scoring_run,
+	list_scoring_runs,
+	mark_orphaned_scoring_runs_paused,
+	update_scoring_run,
+)
+from bosshunter.scoring_selection import preview_scoring, select_scoring_jobs, validate_options
 from bosshunter.web.preflight import check_ai_connection, collect_preflight_checks, error_messages
 from bosshunter.web.resume_upload import ResumeUploadError, prepare_resume_content
 from bosshunter.web.city_lookup import CityLookupError, lookup_city
@@ -99,6 +108,7 @@ def set_base_dir(base_dir: Path | str) -> None:
 	DATA_DIR = BASE_DIR / "data"
 	RESUME_DIR = DATA_DIR / "resumes"
 	CONFIG_PATH = BASE_DIR / "config.yaml"
+	mark_orphaned_scoring_runs_paused(DATA_DIR / "bosshunter.db")
 
 
 def _get_web_db():
@@ -324,6 +334,47 @@ def _execute_rescore(task: WorkbenchTask, config: dict) -> None:
 	score_config["_workbench_score_progress"] = lambda state: _record_score_progress(task, state)
 	_log(task, "开始重新评分")
 	score_jobs(score_config, rescore_filtered=True)
+
+
+def _execute_score(task: WorkbenchTask, config: dict) -> None:
+	from bosshunter.ai.scorer import score_jobs
+
+	run_id = str(config.get("_score_run_id") or "")
+	options = config.get("_score_options", {}) if isinstance(config.get("_score_options"), dict) else {}
+	db_path = DATA_DIR / "bosshunter.db"
+
+	def checkpoint(state: dict) -> None:
+		remaining = [str(job_id) for job_id in state.get("remaining_job_ids", []) if str(job_id)]
+		status = str(state.get("status") or "running")
+		update_scoring_run(
+			db_path,
+			run_id,
+			status=status,
+			remaining_job_ids=remaining,
+			progress={**task.metrics, "remaining": len(remaining)},
+			pause_reason=str(state.get("pause_reason") or "") if status == "paused" else None,
+		)
+		if status == "paused":
+			task.stop_reason = str(state.get("pause_reason") or "评分任务已暂停")
+			task.stop_requested.set()
+
+	score_config = dict(config)
+	score_config["_workbench_stop_event"] = task.stop_requested
+	score_config["_workbench_log"] = lambda message: _log(task, message)
+	score_config["_workbench_score_progress"] = lambda state: _record_score_progress(task, state)
+	score_config["_workbench_score_checkpoint"] = checkpoint
+	_log(task, f"开始单独 AI 评分：{len(options.get('job_ids', []))} 个岗位")
+	try:
+		score_jobs(
+			score_config,
+			scope="selected",
+			limit=None,
+			job_ids=list(options.get("job_ids", [])),
+			force_rescore=bool(options.get("force_rescore")),
+		)
+	except Exception as exc:
+		update_scoring_run(db_path, run_id, status="failed", error=str(exc)[:1000])
+		raise
 
 
 def _queue_monitor_delivery(
@@ -586,6 +637,7 @@ task_runner._executors.update({
 	"full": _execute_full,
 	"collect": _execute_collect,
 	"rescore": _execute_rescore,
+	"score": _execute_score,
 	"monitor": _execute_monitor,
 	"deliver": _execute_deliver,
 })
@@ -833,6 +885,168 @@ def api_ai_diagnostics():
 		return _json_response({"ok": not messages, "messages": messages, "checks": checks})
 	except Exception as e:
 		return _json_response({"ok": False, "messages": [str(e)]}, 500)
+
+
+def _scoring_options_from_body(body: dict) -> dict:
+	raw_options = body.get("options", body)
+	if not isinstance(raw_options, dict):
+		raise ValueError("评分参数必须是对象")
+	return validate_options(
+		raw_options.get("scope", "pending"),
+		raw_options.get("limit"),
+		raw_options.get("job_ids", []),
+		raw_options.get("force_rescore", False),
+	)
+
+
+@app.route("/api/scoring/preview", method="POST")
+def api_scoring_preview():
+	try:
+		body = request.json or {}
+		if not isinstance(body, dict):
+			raise ValueError("请求体必须是对象")
+		options = _scoring_options_from_body(body)
+		config = load_config(CONFIG_PATH)
+		max_attempts = config.get("ai", {}).get("scoring_max_attempts", 2)
+		db = _get_web_db()
+		try:
+			return _json_response(preview_scoring(db, **options, max_attempts_per_job=max_attempts))
+		finally:
+			db.close()
+	except ValueError as exc:
+		return _json_response({"error": str(exc)}, 400)
+
+
+@app.route("/api/scoring/start", method="POST")
+def api_scoring_start():
+	run_id = str(uuid4())
+	db_path = DATA_DIR / "bosshunter.db"
+	try:
+		body = request.json or {}
+		if not isinstance(body, dict):
+			raise ValueError("请求体必须是对象")
+		options = _scoring_options_from_body(body)
+		config = load_config(CONFIG_PATH)
+		messages = _preflight_messages("rescore", config)
+		if messages:
+			return _json_response({"error": "请先处理评分启动检查", "messages": messages}, 400)
+		active_runs = [run for run in list_scoring_runs(db_path, limit=100) if run.get("status") in {"running", "paused"}]
+		if active_runs:
+			return _json_response({"error": "已有独立评分任务正在运行或等待恢复，请先继续或结束该任务"}, 409)
+		db = _get_web_db()
+		try:
+			selected = select_scoring_jobs(db, **options)
+		finally:
+			db.close()
+		job_ids = [str(job["id"]) for job in selected]
+		if not job_ids:
+			return _json_response({"error": "没有符合条件的待评分岗位"}, 400)
+		stored_options = {
+			"scope": options["scope"],
+			"limit": options["limit"],
+			"force_rescore": options["force_rescore"],
+		}
+		create_scoring_run(db_path, run_id=run_id, options=stored_options, job_ids=job_ids)
+		runtime_options = {"job_ids": job_ids, "force_rescore": options["force_rescore"]}
+		with job_mutation_lock:
+			update_scoring_run(db_path, run_id, status="running")
+			task = task_runner.start("score", _task_config({
+				"_score_run_id": run_id,
+				"_score_options": runtime_options,
+			}))
+		update_scoring_run(db_path, run_id, task_id=str(task["id"]))
+		return _json_response({"run": get_scoring_run(db_path, run_id), "task": task})
+	except TaskAlreadyRunningError as exc:
+		update_scoring_run(db_path, run_id, status="stopped", error=str(exc))
+		return _json_response({"error": str(exc)}, 409)
+	except ValueError as exc:
+		return _json_response({"error": str(exc)}, 400)
+	except Exception as exc:
+		update_scoring_run(db_path, run_id, status="failed", error=str(exc)[:1000])
+		return _json_response({"error": "启动评分失败"}, 500)
+
+
+@app.route("/api/scoring/runs")
+def api_scoring_runs():
+	return _json_response(list_scoring_runs(DATA_DIR / "bosshunter.db"))
+
+
+@app.route("/api/scoring/runs/<run_id>/pause", method="POST")
+def api_scoring_pause(run_id):
+	db_path = DATA_DIR / "bosshunter.db"
+	run = get_scoring_run(db_path, run_id)
+	if not run:
+		return _json_response({"error": "评分任务不存在"}, 404)
+	if run.get("status") != "running":
+		return _json_response(run)
+	try:
+		task = task_runner.stop(str(run.get("task_id") or ""), "用户暂停独立评分")
+	except KeyError:
+		task = {"status": "stopped"}
+	latest = get_scoring_run(db_path, run_id) or run
+	if task.get("status") not in {"completed", "failed"} and latest.get("remaining_job_ids"):
+		latest = update_scoring_run(db_path, run_id, status="paused", pause_reason="用户暂停独立评分") or latest
+	return _json_response(latest)
+
+
+@app.route("/api/scoring/runs/<run_id>/resume", method="POST")
+def api_scoring_resume(run_id):
+	db_path = DATA_DIR / "bosshunter.db"
+	run = get_scoring_run(db_path, run_id)
+	if not run:
+		return _json_response({"error": "评分任务不存在"}, 404)
+	if run.get("status") != "paused":
+		return _json_response({"error": "只有已暂停的评分任务可以恢复"}, 409)
+	remaining = [str(job_id) for job_id in run.get("remaining_job_ids", []) if str(job_id)]
+	if not remaining:
+		return _json_response({"error": "该评分任务没有剩余岗位"}, 400)
+	config = load_config(CONFIG_PATH)
+	messages = _preflight_messages("rescore", config)
+	if messages:
+		return _json_response({"error": "请先处理评分启动检查", "messages": messages}, 400)
+	force_rescore = bool(run.get("options", {}).get("force_rescore"))
+	db = _get_web_db()
+	try:
+		eligible = select_scoring_jobs(
+			db,
+			scope="selected",
+			limit=None,
+			job_ids=remaining,
+			force_rescore=force_rescore,
+		)
+	finally:
+		db.close()
+	remaining = [str(job["id"]) for job in eligible]
+	if not remaining:
+		completed = update_scoring_run(db_path, run_id, status="completed", remaining_job_ids=[])
+		return _json_response(completed)
+	try:
+		with job_mutation_lock:
+			update_scoring_run(db_path, run_id, status="running", remaining_job_ids=remaining)
+			task = task_runner.start("score", _task_config({
+				"_score_run_id": run_id,
+				"_score_options": {"job_ids": remaining, "force_rescore": force_rescore},
+			}))
+		update_scoring_run(db_path, run_id, task_id=str(task["id"]))
+		return _json_response({"run": get_scoring_run(db_path, run_id), "task": task})
+	except TaskAlreadyRunningError as exc:
+		update_scoring_run(db_path, run_id, status="paused", pause_reason=str(exc))
+		return _json_response({"error": str(exc)}, 409)
+
+
+@app.route("/api/scoring/runs/<run_id>/end", method="POST")
+def api_scoring_end(run_id):
+	db_path = DATA_DIR / "bosshunter.db"
+	run = get_scoring_run(db_path, run_id)
+	if not run:
+		return _json_response({"error": "评分任务不存在"}, 404)
+	if run.get("status") == "running" and run.get("task_id"):
+		try:
+			task_runner.stop(str(run["task_id"]), "用户结束独立评分")
+		except KeyError:
+			pass
+	ended = update_scoring_run(db_path, run_id, status="stopped", remaining_job_ids=[])
+	return _json_response(ended)
 
 
 @app.route("/api/workbench/task", method="POST")
