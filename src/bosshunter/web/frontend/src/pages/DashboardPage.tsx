@@ -872,11 +872,64 @@ function JobsPoolView() {
   const pageSize = 15
   const [page, setPage] = useState(0)
   const [filters, setFilters] = useState<JobFilters>({ ...EMPTY_JOB_FILTERS })
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [notice, setNotice] = useState('')
   const { items, total, allTotal, loading, error } = useJobSearch(filters, page, pageSize)
 
   useEffect(() => {
     setPage(0)
   }, [filters.query, filters.minScore, filters.salaryMin, filters.salaryMax, filters.status, filters.createdWithin])
+
+  const toggleSelected = (jobId: string) => {
+    setSelectedIds(previous => previous.includes(jobId) ? previous.filter(id => id !== jobId) : [...previous, jobId])
+  }
+
+  const allPageSelected = items.length > 0 && items.every(job => selectedIds.includes(job.id))
+  const toggleCurrentPage = () => {
+    const pageIds = new Set(items.map(job => job.id))
+    setSelectedIds(previous => allPageSelected
+      ? previous.filter(id => !pageIds.has(id))
+      : [...new Set([...previous, ...pageIds])])
+  }
+
+  const exportJobs = async (format: 'xlsx' | 'csv', scope: 'all' | 'filtered' | 'selected') => {
+    try {
+      const res = await fetch('/api/jobs/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          format,
+          scope,
+          job_ids: scope === 'selected' ? selectedIds : [],
+          filters: scope === 'filtered' ? {
+            q: filters.query.trim(),
+            min_score: filters.minScore,
+            salary_min: filters.salaryMin,
+            salary_max: filters.salaryMax,
+            status: filters.status,
+            created_within: filters.createdWithin,
+          } : {},
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || '导出失败')
+      }
+      const blob = await res.blob()
+      const disposition = res.headers.get('Content-Disposition') || ''
+      const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `bosshunter-jobs.${format}`
+      const url = window.URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      anchor.click()
+      window.URL.revokeObjectURL(url)
+      const exportedCount = Number(res.headers.get('X-Exported-Count'))
+      setNotice(`已导出 ${Number.isFinite(exportedCount) ? exportedCount : 0} 条岗位。`)
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : '导出失败')
+    }
+  }
 
   return (
     <div className="rounded-3xl border border-card-border bg-white p-5">
@@ -896,6 +949,15 @@ function JobsPoolView() {
         invalidSalary={hasInvalidSalaryRange(filters)}
         showStatus
       />
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+        <Button variant="secondary" size="sm" disabled={!items.length} onClick={toggleCurrentPage}>
+          {allPageSelected ? '取消选择本页' : '选择本页'}
+        </Button>
+        <span className="rounded-full bg-[#FFF0E5] px-3 py-2 font-bold text-primary">已选择 {selectedIds.length} 条</span>
+        {selectedIds.length > 0 && <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>清空选择</Button>}
+        <ExportMenu onExport={exportJobs} hasSelection={selectedIds.length > 0} hasFiltered={total > 0} />
+      </div>
+      {notice && <div className="mb-4 rounded-xl bg-[#FFF0E5] px-4 py-3 text-sm text-primary">{notice}</div>}
       {error && <div className="mb-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-danger">{error}</div>}
       <JobsTable
         jobs={items}
@@ -903,8 +965,37 @@ function JobsPoolView() {
         pageSize={pageSize}
         total={total}
         onPageChange={setPage}
+        selectedIds={selectedIds}
+        onToggleSelected={toggleSelected}
         loading={loading}
       />
+    </div>
+  )
+}
+
+function ExportMenu({
+  onExport,
+  hasSelection,
+  hasFiltered,
+}: {
+  onExport: (format: 'xlsx' | 'csv', scope: 'all' | 'filtered' | 'selected') => void
+  hasSelection: boolean
+  hasFiltered: boolean
+}) {
+  const [format, setFormat] = useState<'xlsx' | 'csv'>('xlsx')
+  return (
+    <div className="ml-auto flex flex-wrap items-center gap-2">
+      <select
+        value={format}
+        onChange={event => setFormat(event.target.value as 'xlsx' | 'csv')}
+        className="rounded-xl border border-card-border bg-white px-2 py-2 text-xs outline-none focus:border-primary"
+      >
+        <option value="xlsx">XLSX</option>
+        <option value="csv">CSV</option>
+      </select>
+      <Button variant="secondary" size="sm" disabled={!hasFiltered} onClick={() => onExport(format, 'filtered')}>导出筛选结果</Button>
+      <Button variant="secondary" size="sm" disabled={!hasSelection} onClick={() => onExport(format, 'selected')}>导出所选岗位</Button>
+      <Button variant="secondary" size="sm" onClick={() => onExport(format, 'all')}>导出全部岗位</Button>
     </div>
   )
 }

@@ -22,7 +22,8 @@ from bottle import Bottle, request, response, static_file, abort
 
 from bosshunter import __version__
 from bosshunter.ai.credentials import get_ai_api_key
-from bosshunter.config import AI_SERVICE_PRESETS, CITY_CODES, load_config
+from bosshunter.cities import CityRefreshError, get_city_map, load_city_snapshot, refresh_city_cache
+from bosshunter.config import AI_SERVICE_PRESETS, load_config
 from bosshunter.db import (
 	add_history,
 	count_unresolved_monitor_items,
@@ -40,6 +41,7 @@ from bosshunter.db import (
 	update_job_status,
 )
 from bosshunter.job_filters import parse_monthly_salary_k
+from bosshunter.job_export import InvalidJobSelectionError, export_jobs, export_row_count
 from bosshunter.web.preflight import check_ai_connection, collect_preflight_checks, error_messages
 from bosshunter.web.resume_upload import ResumeUploadError, prepare_resume_content
 from bosshunter.web.city_lookup import CityLookupError, lookup_city
@@ -1130,17 +1132,103 @@ def api_config_download():
 
 @app.route("/api/config/cities")
 def api_cities():
-	return _json_response(CITY_CODES)
+	return _json_response(get_city_map(BASE_DIR))
 
 
 @app.route("/api/config/cities/lookup", method="POST")
 def api_city_lookup():
 	try:
 		body = request.json or {}
-		city = str(body.get("city") or "")
+		city = str(body.get("city") or "").strip()
+		city_code = get_city_map(BASE_DIR).get(city)
+		if city_code:
+			return _json_response({"name": city, "code": city_code})
 		return _json_response(lookup_city(city))
 	except CityLookupError as exc:
 		return _json_response({"error": str(exc)}, 400)
+
+
+@app.route("/api/cities")
+def api_city_snapshot():
+	try:
+		snapshot = load_city_snapshot(BASE_DIR)
+		return _json_response({
+			"ok": True,
+			"source": snapshot.get("source", "bundled"),
+			"count": len(snapshot.get("cities", [])),
+			"updated_at": snapshot.get("fetched_at"),
+			"cities": snapshot.get("cities", []),
+		})
+	except Exception:
+		return _json_response({
+			"ok": False,
+			"source": "bundled",
+			"count": 0,
+			"cities": [],
+			"error": "本地城市列表不可用",
+		}, 500)
+
+
+@app.route("/api/cities/refresh", method="POST")
+def api_city_refresh():
+	try:
+		snapshot = refresh_city_cache(DATA_DIR / "cities.cache.json")
+		return _json_response({
+			"ok": True,
+			"source": "cache",
+			"count": len(snapshot.get("cities", [])),
+			"updated_at": snapshot.get("fetched_at"),
+			"cities": snapshot.get("cities", []),
+		})
+	except CityRefreshError as exc:
+		return _json_response({
+			"ok": False,
+			"source": "local",
+			"using_local_data": True,
+			"error": str(exc),
+		}, 502)
+
+
+@app.route("/api/jobs/export", method="POST")
+def api_jobs_export():
+	db = _get_web_db()
+	try:
+		body = request.json or {}
+		if not isinstance(body, dict):
+			return _json_response({"error": "请求体必须是对象"}, 400)
+		format_value = body.get("format", "xlsx")
+		scope = body.get("scope", "all")
+		job_ids = body.get("job_ids", [])
+		filters = body.get("filters", {})
+		if not isinstance(job_ids, list):
+			return _json_response({"error": "岗位 ID 必须是数组"}, 400)
+		if not isinstance(filters, dict):
+			return _json_response({"error": "筛选条件必须是对象"}, 400)
+		content, content_type, filename = export_jobs(
+			db,
+			format=format_value,
+			scope=scope,
+			job_ids=job_ids,
+			filters=filters,
+		)
+		exported_count = export_row_count(db, scope=scope, job_ids=job_ids, filters=filters)
+		response.content_type = content_type
+		response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+		response.headers["Content-Length"] = str(len(content))
+		response.headers["X-Exported-Count"] = str(exported_count)
+		return content
+	except InvalidJobSelectionError as exc:
+		return _json_response({
+			"error": str(exc),
+			"code": "invalid_job_ids",
+			"invalid_ids": exc.invalid_ids,
+		}, 400)
+	except ValueError as exc:
+		return _json_response({"error": str(exc)}, 400)
+	except Exception:
+		return _json_response({"error": "岗位导出失败"}, 500)
+	finally:
+		db.close()
 
 
 # ─── Resume APIs ─────────────────────────────────────────

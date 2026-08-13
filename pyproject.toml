@@ -17,6 +17,7 @@ dependencies = [
     "anthropic>=0.40",
     "markdown2>=2.4",
     "bottle>=0.13",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +33,7 @@ packages = ["src/bosshunter"]
 artifacts = [
     "src/bosshunter/browser/runtime/*.mjs",
     "src/bosshunter/browser/runtime/site-patterns/*.md",
+    "src/bosshunter/data/*.json",
 ]
 
 [tool.pytest.ini_options]
