@@ -5,16 +5,10 @@ import { Select } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
 import { TagsInput } from '@/components/ui/tags-input'
+import { CityMultiSelect, type CityOption } from '@/components/config/CityMultiSelect'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Save, RotateCcw, Upload, Trash2, ChevronDown, ChevronRight } from 'lucide-react'
 import { useState, useEffect } from 'react'
-
-// City options
-const CITIES = [
-  '北京', '上海', '深圳', '广州', '杭州', '成都', '武汉', '南京',
-  '西安', '苏州', '天津', '重庆', '郑州', '长沙', '东莞', '佛山',
-  '合肥', '厦门', '青岛', '大连'
-]
 
 const AI_SERVICES = {
   anthropic: {
@@ -55,10 +49,19 @@ export default function ConfigPage() {
   const [resumeInfo, setResumeInfo] = useState<any>(null)
   const [resumeUploadError, setResumeUploadError] = useState('')
   const [aiTest, setAiTest] = useState<{ testing: boolean; ok?: boolean; message?: string }>({ testing: false })
-  const [cityError, setCityError] = useState('')
+  const [cityOptions, setCityOptions] = useState<CityOption[]>([])
+  const [cityRefreshing, setCityRefreshing] = useState(false)
+  const [cityMessage, setCityMessage] = useState('')
 
   useEffect(() => {
     fetch('/api/resume').then(r => r.json()).then(setResumeInfo).catch(() => {})
+    fetch('/api/cities', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data.cities)) setCityOptions(data.cities)
+        if (!data.ok) setCityMessage(data.error || '本地城市列表读取失败')
+      })
+      .catch(() => setCityMessage('本地城市列表读取失败'))
   }, [])
 
   const toggleSection = (key: string) => {
@@ -143,25 +146,27 @@ export default function ConfigPage() {
     updateConfig('profile.target_cities', cities)
   }
 
-  const addCustomCity = async (city: string) => {
-    const currentCities = (config?.search?.cities?.length ? config.search.cities : config?.profile?.target_cities) || []
-    if (currentCities.includes(city)) return
-    setCityError('')
+  const handleCityRefresh = async () => {
+    setCityRefreshing(true)
+    setCityMessage('')
     try {
-      const res = await fetch('/api/config/cities/lookup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ city }),
-      })
+      const res = await fetch('/api/cities/refresh', { method: 'POST' })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || '城市查询失败')
-      updateCities(
-        [...currentCities, data.name],
-        { ...(config?.search?.city_codes || {}), [data.name]: data.code },
-      )
+      if (Array.isArray(data.cities)) setCityOptions(data.cities)
+      if (!res.ok || !data.ok) throw new Error(data.error || '刷新失败，继续使用本地城市列表')
+      setCityMessage(`已刷新 ${data.count} 个城市。`)
     } catch (error) {
-      setCityError(error instanceof Error ? error.message : '城市查询失败')
+      setCityMessage(error instanceof Error ? error.message : '刷新失败，继续使用本地城市列表')
+    } finally {
+      setCityRefreshing(false)
     }
+  }
+
+  const handleCityChange = (cities: string[]) => {
+    const bundledCodes = Object.fromEntries(
+      cityOptions.filter(city => cities.includes(city.name)).map(city => [city.name, city.code]),
+    )
+    updateCities(cities, { ...(config?.search?.city_codes || {}), ...bundledCodes })
   }
 
   if (loading) {
@@ -259,44 +264,14 @@ export default function ConfigPage() {
               <TagsInput value={config.search?.keywords || []} onChange={v => updateConfig('search.keywords', v)} />
             </Field>
             <Field label="城市">
-              {(() => {
-                const cities = (config.search?.cities?.length ? config.search.cities : config.profile?.target_cities) || []
-                return <>
-              <div className="flex flex-wrap gap-2">
-                {CITIES.map(city => {
-                  const selected = cities.includes(city)
-                  return (
-                    <button
-                      key={city}
-                      type="button"
-                      onClick={() => {
-                        const newCities = selected ? cities.filter((c: string) => c !== city) : [...cities, city]
-                        updateCities(newCities)
-                      }}
-                      className={`px-2 py-1 text-xs rounded border transition-colors ${selected ? 'bg-primary/20 border-primary/50 text-primary' : 'border-card-border bg-[#FFFCFA] text-muted hover:border-primary/40 hover:text-foreground'}`}
-                    >
-                      {city}
-                    </button>
-                  )
-                })}
-              </div>
-              <div className="mt-3">
-                <TagsInput
-                  value={cities.filter((city: string) => !CITIES.includes(city))}
-                  onChange={customCities => {
-                    const builtInCities = cities.filter((city: string) => CITIES.includes(city))
-                    const cityCodes = Object.fromEntries(
-                      Object.entries(config.search?.city_codes || {}).filter(([city]) => customCities.includes(city)),
-                    )
-                    updateCities([...builtInCities, ...customCities], cityCodes)
-                  }}
-                  onAdd={addCustomCity}
-                  placeholder="输入其他城市后按回车添加"
-                />
-                {cityError && <p className="mt-2 text-xs text-red-500">{cityError}</p>}
-              </div>
-              </>
-              })()}
+              <CityMultiSelect
+                options={cityOptions}
+                value={(config.search?.cities?.length ? config.search.cities : config.profile?.target_cities) || []}
+                onChange={handleCityChange}
+                onRefresh={handleCityRefresh}
+                refreshing={cityRefreshing}
+                message={cityMessage}
+              />
             </Field>
             <Field label="每关键词翻页数">
               <Input type="number" value={config.search?.max_pages || 3} onChange={e => updateConfig('search.max_pages', Number(e.target.value))} min={1} max={10} />

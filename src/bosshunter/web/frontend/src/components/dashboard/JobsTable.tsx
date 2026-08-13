@@ -11,6 +11,8 @@ interface JobsTableProps {
   pageSize: number
   total: number
   onPageChange: (page: number) => void
+  selectedIds: string[]
+  onToggleSelected: (id: string) => void
   loading?: boolean
 }
 
@@ -33,7 +35,7 @@ function statusVariant(status: string) {
   return variants.has(status) ? status : 'default'
 }
 
-export function JobsTable({ jobs, page, pageSize, total, onPageChange, loading = false }: JobsTableProps) {
+export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedIds, onToggleSelected, loading = false }: JobsTableProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const totalPages = Math.ceil(total / pageSize)
 
@@ -68,6 +70,7 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, loading =
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-card-border bg-[#FFF0E5] text-xs text-muted">
+                <th className="w-10 px-3 py-3 text-center font-bold">选</th>
                 <th className="px-4 py-3 text-left font-bold">公司</th>
                 <th className="px-4 py-3 text-left font-bold">职位</th>
                 <th className="px-4 py-3 text-left font-bold">薪资</th>
@@ -86,6 +89,15 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, loading =
                       className="cursor-pointer border-b border-card-border bg-white transition-colors hover:bg-[#FFFCFA]"
                       onClick={() => setExpanded(isExpanded ? null : job.id)}
                     >
+                      <td className="px-3 py-3 text-center" onClick={event => event.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(job.id)}
+                          onChange={() => onToggleSelected(job.id)}
+                          aria-label={`选择 ${job.company} ${job.title}`}
+                          className="h-4 w-4 accent-primary"
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <span className="max-w-[160px] truncate font-black text-foreground">{job.company}</span>
@@ -112,7 +124,7 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, loading =
                     </tr>
                     {isExpanded && (
                       <tr className="border-b border-card-border bg-[#FFFCFA]">
-                        <td colSpan={7} className="px-6 py-4">
+                        <td colSpan={8} className="px-6 py-4">
                           <div className="grid grid-cols-1 gap-4 text-sm lg:grid-cols-3">
                             <div className="rounded-2xl border border-card-border bg-white p-4">
                               <p className="mb-2 text-xs font-black text-primary">JD摘要</p>
@@ -135,7 +147,7 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, loading =
               })}
               {!jobs.length && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-sm text-muted">
+                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted">
                     {loading ? '正在读取岗位…' : '没有符合当前条件的岗位'}
                   </td>
                 </tr>
