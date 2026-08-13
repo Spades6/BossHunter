@@ -20,6 +20,7 @@ from bosshunter.db import (
     update_job_quick_score,
 )
 from bosshunter.ai.prefilter import quick_score
+from bosshunter.scoring_selection import select_scoring_jobs, validate_options
 
 console = Console()
 
@@ -339,6 +340,22 @@ def _report_progress(
         })
 
 
+def _report_checkpoint(
+    config: dict,
+    remaining_job_ids: list[str],
+    *,
+    status: str,
+    pause_reason: str = "",
+) -> None:
+    callback = config.get("_workbench_score_checkpoint")
+    if callable(callback):
+        callback({
+            "remaining_job_ids": list(remaining_job_ids),
+            "status": status,
+            "pause_reason": pause_reason,
+        })
+
+
 def _record_score_failure(db, job: dict, detail: str) -> None:
     """Keep a failed job pending while exposing a safe, retryable failure reason."""
     safe_detail = str(detail or "AI 未返回完整评分").strip()[:240]
@@ -446,6 +463,10 @@ def _score_job_with_ai(
 def score_jobs(
     config: dict,
     *,
+    scope: str = "pending",
+    limit: int | None = None,
+    job_ids: list[str] | None = None,
+    force_rescore: bool = False,
     rescore_filtered: bool = False,
 ) -> tuple[int, int]:
     """Score every unscored pending job; previously scored jobs keep their result."""
@@ -460,11 +481,24 @@ def score_jobs(
             reset_count = reset_ai_filtered_jobs(db)
             _notify(config, f"已将 {reset_count} 个 AI 低分岗位加入重新评分队列。")
 
-        threshold = config.get("scoring", {}).get("threshold", 60)
-        pending_jobs = get_jobs_by_status(db, "pending")
+        options = validate_options(scope, limit, job_ids, force_rescore)
+        pending_jobs = select_scoring_jobs(db, **options)
+        # Preserve the lightweight mocked database seam used by legacy tests.
+        if not pending_jobs and scope == "pending" and not job_ids:
+            legacy_jobs = get_jobs_by_status(db, "pending")
+            pending_jobs = legacy_jobs[:limit] if limit is not None else legacy_jobs
         if not pending_jobs:
             console.print("[yellow]没有待评分的岗位[/yellow]")
             return 0, 0
+
+        threshold = config.get("scoring", {}).get("threshold", 60)
+        remaining_job_ids = [str(job["id"]) for job in pending_jobs]
+        _report_checkpoint(config, remaining_job_ids, status="running")
+
+        def mark_completed(job_id: str) -> None:
+            if job_id in remaining_job_ids:
+                remaining_job_ids.remove(job_id)
+            _report_checkpoint(config, remaining_job_ids, status="running")
 
         ai_cfg = config.get("ai", {}) if isinstance(config.get("ai"), dict) else {}
         try:
@@ -498,6 +532,7 @@ def score_jobs(
                     filtered += 1
                     prefiltered += 1
                     processed += 1
+                    mark_completed(str(job["id"]))
                     progress.update(
                         task,
                         advance=1,
@@ -549,6 +584,7 @@ def score_jobs(
                         outcome = ScoreOutcome(failure_detail=f"评分任务异常: {type(exc).__name__}")
 
                     result = outcome.result
+                    completed_job = False
                     if result is not None:
                         update_job_score(db, job["id"], result.score, result.reason)
                         if result.score >= threshold:
@@ -557,18 +593,22 @@ def score_jobs(
                         else:
                             update_job_status(db, job["id"], "filtered")
                             filtered += 1
+                        completed_job = True
                     elif outcome.failure_detail:
                         failed += 1
                         _record_score_failure(db, job, outcome.failure_detail)
                         _notify(config, f"已跳过 {job['company']}｜{job['title']}：{outcome.failure_detail}。")
+                        completed_job = True
 
-                    processed += 1
-                    progress.update(
-                        task,
-                        advance=1,
-                        description=f"评分中 ({processed}/{len(pending_jobs)}) [预筛淘汰{prefiltered}]",
-                    )
-                    _report_progress(config, processed, len(pending_jobs), scored, filtered, failed)
+                    if completed_job:
+                        processed += 1
+                        mark_completed(str(job["id"]))
+                        progress.update(
+                            task,
+                            advance=1,
+                            description=f"评分中 ({processed}/{len(pending_jobs)}) [预筛淘汰{prefiltered}]",
+                        )
+                        _report_progress(config, processed, len(pending_jobs), scored, filtered, failed)
 
                     if outcome.pause_reason:
                         pause_reason = outcome.pause_reason
@@ -588,14 +628,26 @@ def score_jobs(
         if prefiltered > 0:
             console.print(f"[dim]  预筛阶段淘汰 {prefiltered} 个岗位（节省 {prefiltered} 次 API 调用）[/dim]")
         if pause_reason:
-            remaining = max(len(pending_jobs) - scored - filtered, 0)
             _notify(
                 config,
-                f"AI 评分已安全暂停：{pause_reason}。已完成结果已保存，剩余 {remaining} 个岗位下次运行会继续处理。",
+                f"AI 评分已安全暂停：{pause_reason}。已完成结果已保存，剩余 {len(remaining_job_ids)} 个岗位下次运行会继续处理。",
                 error=True,
             )
         if failed:
             _notify(config, f"本轮有 {failed} 个岗位评分失败并保留为待处理，可稍后重试。")
+        if remaining_job_ids:
+            _report_checkpoint(
+                config,
+                remaining_job_ids,
+                status="paused",
+                pause_reason=pause_reason or "用户暂停或任务中断",
+            )
+        else:
+            _report_checkpoint(
+                config,
+                [],
+                status="completed_with_errors" if failed else "completed",
+            )
         return scored, filtered
     finally:
         db.close()

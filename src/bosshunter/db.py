@@ -1,5 +1,6 @@
 """Database module - SQLite storage for jobs, history and state tracking."""
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -86,6 +87,7 @@ def _init_tables(conn: sqlite3.Connection) -> None:
     conn.commit()
     _migrate_v1_1(conn)
     _migrate_v1_2(conn)
+    _init_scoring_runs(conn)
 
 
 def job_exists(conn: sqlite3.Connection, job_id: str) -> bool:
@@ -170,6 +172,26 @@ def _history_protection_reasons(conn: sqlite3.Connection, job_id: str) -> list[s
     return ["历史中存在发送或回复证据"] if actions & DELETION_PROTECTED_HISTORY_ACTIONS else []
 
 
+def _scoring_run_conflicts(conn: sqlite3.Connection, job_ids: set[str]) -> list[dict[str, Any]]:
+    conflicts: list[dict[str, Any]] = []
+    rows = conn.execute(
+        "SELECT id, status, remaining_job_ids_json FROM scoring_runs WHERE status IN ('running', 'paused')"
+    ).fetchall()
+    for row in rows:
+        try:
+            remaining = json.loads(row["remaining_job_ids_json"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            remaining = []
+        for job_id in sorted(job_ids & {str(value) for value in remaining if str(value)}):
+            conflicts.append({
+                "job_id": job_id,
+                "reasons": ["独立评分任务仍在运行或等待恢复"],
+                "scoring_run_id": str(row["id"]),
+                "run_status": str(row["status"]),
+            })
+    return conflicts
+
+
 def soft_delete_jobs(
     conn: sqlite3.Connection,
     job_ids: Any,
@@ -180,6 +202,9 @@ def soft_delete_jobs(
     if confirmed is not True:
         raise JobDeletionConfirmationError("移入回收站需要 confirmed=true")
     ids = _normalize_job_ids(job_ids, required=True)
+    run_conflicts = _scoring_run_conflicts(conn, set(ids))
+    if run_conflicts:
+        raise JobDeletionConflictError("岗位仍被评分任务引用，请先结束该评分任务", blocked=run_conflicts)
     rows = _job_rows_by_ids(conn, ids)
     found_ids = {str(row["id"]) for row in rows}
     active_rows = [row for row in rows if row.get("deleted_at") is None]
@@ -240,6 +265,9 @@ def permanent_delete_jobs(
     if confirmed is not True or confirmation != "PERMANENT_DELETE":
         raise JobDeletionConfirmationError("永久删除需要 confirmed=true 和 confirmation=PERMANENT_DELETE")
     ids = _normalize_job_ids(job_ids, required=True)
+    run_conflicts = _scoring_run_conflicts(conn, set(ids))
+    if run_conflicts:
+        raise JobDeletionConflictError("岗位仍被评分任务引用，请先结束该评分任务", blocked=run_conflicts)
     rows = _job_rows_by_ids(conn, ids)
     found_ids = {str(row["id"]) for row in rows}
     not_found = [job_id for job_id in ids if job_id not in found_ids]
@@ -398,6 +426,28 @@ def _migrate_v1_2(conn: sqlite3.Connection) -> None:
     if "deleted_reason" not in cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN deleted_reason TEXT NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_deleted_at ON jobs(deleted_at)")
+    conn.commit()
+
+
+def _init_scoring_runs(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS scoring_runs (
+            id TEXT PRIMARY KEY,
+            task_id TEXT,
+            status TEXT NOT NULL,
+            options_json TEXT NOT NULL,
+            remaining_job_ids_json TEXT NOT NULL,
+            progress_json TEXT NOT NULL,
+            pause_reason TEXT,
+            error TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            finished_at TIMESTAMP NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_scoring_runs_status ON scoring_runs(status);
+        """
+    )
     conn.commit()
 
 
