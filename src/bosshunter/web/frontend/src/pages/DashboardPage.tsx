@@ -3,6 +3,7 @@ import { useDashboard, type HistoryItem, type Job, type WorkbenchTask } from '@/
 import { useJobSearch } from '@/hooks/useJobSearch'
 import { Button } from '@/components/ui/button'
 import { JobsTable } from '@/components/dashboard/JobsTable'
+import { RecycleBinPanel } from '@/components/dashboard/RecycleBinPanel'
 import { JobFilterBar } from '@/components/jobs/JobFilterBar'
 import { parseHistoryDetail } from '@/lib/historyDetail'
 import {
@@ -24,6 +25,7 @@ import {
   Play,
   RefreshCw,
   Square,
+  Trash2,
   XCircle,
 } from 'lucide-react'
 
@@ -874,7 +876,13 @@ function JobsPoolView() {
   const [filters, setFilters] = useState<JobFilters>({ ...EMPTY_JOB_FILTERS })
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [notice, setNotice] = useState('')
-  const { items, total, allTotal, loading, error } = useJobSearch(filters, page, pageSize)
+  const [showRecycleBin, setShowRecycleBin] = useState(false)
+  const [recycleJobs, setRecycleJobs] = useState<Job[]>([])
+  const [recycleSelectedIds, setRecycleSelectedIds] = useState<string[]>([])
+  const [recycleLoading, setRecycleLoading] = useState(false)
+  const [permanentDeleteIds, setPermanentDeleteIds] = useState<string[]>([])
+  const [permanentDeleteAcknowledged, setPermanentDeleteAcknowledged] = useState(false)
+  const { items, total, allTotal, loading, error, refresh: refreshJobs } = useJobSearch(filters, page, pageSize)
 
   useEffect(() => {
     setPage(0)
@@ -890,6 +898,102 @@ function JobsPoolView() {
     setSelectedIds(previous => allPageSelected
       ? previous.filter(id => !pageIds.has(id))
       : [...new Set([...previous, ...pageIds])])
+  }
+
+  const loadRecycleBin = async () => {
+    setRecycleLoading(true)
+    try {
+      const collected: Job[] = []
+      let offset = 0
+      const limit = 200
+      while (true) {
+        const res = await fetch(`/api/jobs?deleted=only&limit=${limit}&offset=${offset}`, { cache: 'no-store' })
+        if (!res.ok) throw new Error(`回收站接口返回 ${res.status}`)
+        const pageItems = await res.json()
+        if (!Array.isArray(pageItems)) throw new Error('回收站响应格式无效')
+        collected.push(...pageItems)
+        const totalCount = Number(res.headers.get('X-Total-Count'))
+        if (!pageItems.length || pageItems.length < limit || (Number.isFinite(totalCount) && collected.length >= totalCount)) break
+        offset += pageItems.length
+      }
+      const unique = new Map(collected.map(job => [String(job.id), job]))
+      setRecycleJobs([...unique.values()])
+      setRecycleSelectedIds(previous => previous.filter(id => unique.has(id)))
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : '读取回收站失败')
+    } finally {
+      setRecycleLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadRecycleBin()
+  }, [])
+
+  const postJobAction = async (path: string, payload: Record<string, unknown>) => {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      const blocked = Array.isArray(data.blocked)
+        ? data.blocked.map((item: { job_id?: string; reasons?: string[] }) => `${item.job_id || '岗位'}：${(item.reasons || []).join('、')}`).join('；')
+        : ''
+      throw new Error([data.error || '岗位操作失败', blocked].filter(Boolean).join('；'))
+    }
+    return res.json()
+  }
+
+  const softDelete = async (jobIds: string[]) => {
+    if (!jobIds.length || !window.confirm(`确认将 ${jobIds.length} 个岗位移入回收站吗？岗位不会永久删除。`)) return
+    try {
+      const result = await postJobAction('/api/jobs/soft-delete', { job_ids: jobIds, confirmed: true })
+      setSelectedIds(previous => previous.filter(id => !jobIds.includes(id)))
+      refreshJobs()
+      await loadRecycleBin()
+      setNotice(`已移入回收站 ${result.affected_count || 0} 条岗位。`)
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : '移入回收站失败')
+    }
+  }
+
+  const restoreJobs = async (jobIds: string[]) => {
+    if (!jobIds.length || !window.confirm(`确认恢复 ${jobIds.length} 个岗位吗？恢复后不会自动评分或投递。`)) return
+    try {
+      const result = await postJobAction('/api/jobs/restore', { job_ids: jobIds, confirmed: true })
+      setRecycleSelectedIds(previous => previous.filter(id => !jobIds.includes(id)))
+      refreshJobs()
+      await loadRecycleBin()
+      setNotice(`已恢复 ${result.affected_count || 0} 条岗位。`)
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : '恢复失败')
+    }
+  }
+
+  const requestPermanentDelete = (jobIds: string[]) => {
+    if (!jobIds.length) return
+    setPermanentDeleteIds(jobIds)
+    setPermanentDeleteAcknowledged(false)
+  }
+
+  const confirmPermanentDelete = async () => {
+    if (!permanentDeleteIds.length || !permanentDeleteAcknowledged) return
+    try {
+      const result = await postJobAction('/api/jobs/permanent-delete', {
+        job_ids: permanentDeleteIds,
+        confirmed: true,
+        confirmation: 'PERMANENT_DELETE',
+      })
+      setRecycleSelectedIds(previous => previous.filter(id => !permanentDeleteIds.includes(id)))
+      setPermanentDeleteIds([])
+      setPermanentDeleteAcknowledged(false)
+      await loadRecycleBin()
+      setNotice(`已永久删除 ${result.affected_count || 0} 条岗位。`)
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : '永久删除失败')
+    }
   }
 
   const exportJobs = async (format: 'xlsx' | 'csv', scope: 'all' | 'filtered' | 'selected') => {
@@ -931,6 +1035,36 @@ function JobsPoolView() {
     }
   }
 
+  if (showRecycleBin) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <Button variant="ghost" size="sm" onClick={() => setShowRecycleBin(false)}>返回岗位池</Button>
+          <Button variant="secondary" size="sm" onClick={() => void loadRecycleBin()} disabled={recycleLoading}>刷新回收站</Button>
+        </div>
+        {notice && <div className="rounded-xl bg-[#FFF0E5] px-4 py-3 text-sm text-primary">{notice}</div>}
+        <RecycleBinPanel
+          jobs={recycleJobs}
+          selectedIds={recycleSelectedIds}
+          loading={recycleLoading}
+          onToggleSelected={id => setRecycleSelectedIds(previous => previous.includes(id) ? previous.filter(item => item !== id) : [...previous, id])}
+          onSelectAll={setRecycleSelectedIds}
+          onRestore={ids => void restoreJobs(ids)}
+          onPermanentDelete={requestPermanentDelete}
+        />
+        {permanentDeleteIds.length > 0 && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" role="dialog" aria-modal="true">
+            <div className="w-full max-w-lg rounded-3xl border border-red-200 bg-white p-6 shadow-2xl">
+              <div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-danger" /><div><h3 className="text-xl font-black">确认永久删除</h3><p className="mt-2 text-sm leading-6 text-muted">将永久删除 {permanentDeleteIds.length} 条岗位及其历史，无法恢复。存在发送或回复证据的岗位会被后端拒绝删除。</p></div></div>
+              <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-2xl border border-red-100 bg-red-50 p-3 text-sm font-bold"><input type="checkbox" checked={permanentDeleteAcknowledged} onChange={event => setPermanentDeleteAcknowledged(event.target.checked)} className="mt-0.5 h-4 w-4 accent-danger" /><span>我确认永久删除，并了解此操作无法撤销。</span></label>
+              <div className="mt-6 flex justify-end gap-3"><Button variant="secondary" size="sm" onClick={() => setPermanentDeleteIds([])}>取消</Button><Button variant="destructive" size="sm" disabled={!permanentDeleteAcknowledged} onClick={() => void confirmPermanentDelete()}>永久删除</Button></div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="rounded-3xl border border-card-border bg-white p-5">
       <div className="mb-4 flex items-center justify-between">
@@ -938,7 +1072,10 @@ function JobsPoolView() {
           <h2 className="text-2xl font-black">岗位池</h2>
           <p className="mt-1 text-sm text-muted">集中查看已采集岗位、AI 分数、状态和详情入口。</p>
         </div>
-        <BriefcaseBusiness className="h-6 w-6 text-primary" />
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => { setShowRecycleBin(true); void loadRecycleBin() }}><Trash2 className="mr-1 h-4 w-4" />回收站 ({recycleJobs.length})</Button>
+          <BriefcaseBusiness className="h-6 w-6 text-primary" />
+        </div>
       </div>
       <JobFilterBar
         filters={filters}
@@ -955,6 +1092,7 @@ function JobsPoolView() {
         </Button>
         <span className="rounded-full bg-[#FFF0E5] px-3 py-2 font-bold text-primary">已选择 {selectedIds.length} 条</span>
         {selectedIds.length > 0 && <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>清空选择</Button>}
+        <Button variant="destructive" size="sm" disabled={!selectedIds.length} onClick={() => void softDelete(selectedIds)}>移入回收站</Button>
         <ExportMenu onExport={exportJobs} hasSelection={selectedIds.length > 0} hasFiltered={total > 0} />
       </div>
       {notice && <div className="mb-4 rounded-xl bg-[#FFF0E5] px-4 py-3 text-sm text-primary">{notice}</div>}
@@ -967,6 +1105,7 @@ function JobsPoolView() {
         onPageChange={setPage}
         selectedIds={selectedIds}
         onToggleSelected={toggleSelected}
+        onSoftDelete={job => void softDelete([job.id])}
         loading={loading}
       />
     </div>

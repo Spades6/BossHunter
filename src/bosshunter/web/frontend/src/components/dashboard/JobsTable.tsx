@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import { ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
 import { getStatusLabel } from '@/lib/status'
 import type { Job } from '@/hooks/useDashboard'
 
@@ -13,6 +13,7 @@ interface JobsTableProps {
   onPageChange: (page: number) => void
   selectedIds: string[]
   onToggleSelected: (id: string) => void
+  onSoftDelete?: (job: Job) => void
   loading?: boolean
 }
 
@@ -35,7 +36,7 @@ function statusVariant(status: string) {
   return variants.has(status) ? status : 'default'
 }
 
-export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedIds, onToggleSelected, loading = false }: JobsTableProps) {
+export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedIds, onToggleSelected, onSoftDelete, loading = false }: JobsTableProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const totalPages = Math.ceil(total / pageSize)
 
@@ -78,6 +79,7 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
                 <th className="px-4 py-3 text-left font-bold">状态</th>
                 <th className="px-4 py-3 text-left font-bold">招聘者活跃</th>
                 <th className="px-4 py-3 text-left font-bold">时间</th>
+                {onSoftDelete && <th className="w-16 px-3 py-3 text-center font-bold">操作</th>}
               </tr>
             </thead>
             <tbody>
@@ -121,10 +123,17 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
                           {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                         </div>
                       </td>
+                      {onSoftDelete && (
+                        <td className="px-3 py-3 text-center" onClick={event => event.stopPropagation()}>
+                          <button type="button" onClick={() => onSoftDelete(job)} className="rounded-lg p-2 text-muted hover:bg-red-50 hover:text-danger" aria-label={`将 ${job.company} ${job.title} 移入回收站`}>
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                     {isExpanded && (
                       <tr className="border-b border-card-border bg-[#FFFCFA]">
-                        <td colSpan={8} className="px-6 py-4">
+                        <td colSpan={onSoftDelete ? 9 : 8} className="px-6 py-4">
                           <div className="grid grid-cols-1 gap-4 text-sm lg:grid-cols-3">
                             <div className="rounded-2xl border border-card-border bg-white p-4">
                               <p className="mb-2 text-xs font-black text-primary">JD摘要</p>
@@ -147,7 +156,7 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
               })}
               {!jobs.length && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted">
+                  <td colSpan={onSoftDelete ? 9 : 8} className="px-4 py-10 text-center text-sm text-muted">
                     {loading ? '正在读取岗位…' : '没有符合当前条件的岗位'}
                   </td>
                 </tr>

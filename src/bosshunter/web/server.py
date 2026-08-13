@@ -25,6 +25,7 @@ from bosshunter.ai.credentials import get_ai_api_key
 from bosshunter.cities import CityRefreshError, get_city_map, load_city_snapshot, refresh_city_cache
 from bosshunter.config import AI_SERVICE_PRESETS, load_config
 from bosshunter.db import (
+	JobDeletionConflictError,
 	add_history,
 	count_unresolved_monitor_items,
 	get_daily_activity,
@@ -38,6 +39,10 @@ from bosshunter.db import (
 	get_unresolved_resume_failures,
 	get_stats,
 	get_top_companies,
+	permanent_delete_jobs,
+	query_jobs,
+	restore_jobs,
+	soft_delete_jobs,
 	update_job_status,
 )
 from bosshunter.job_filters import parse_monthly_salary_k
@@ -54,6 +59,7 @@ mimetypes.add_type("text/css", ".css", strict=True)
 
 app = Bottle()
 task_runner = WorkbenchTaskRunner()
+job_mutation_lock = Lock()
 
 
 class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
@@ -627,22 +633,19 @@ def api_activity():
 
 @app.route("/api/jobs")
 def api_jobs():
-	status_filter = request.params.get("status", None)
-	limit = int(request.params.get("limit", 100))
-	offset = int(request.params.get("offset", 0))
+	try:
+		deleted = request.params.get("deleted", "active").strip()
+		limit = int(request.params.get("limit", 100))
+		offset = int(request.params.get("offset", 0))
+		if deleted not in {"active", "only", "all"} or not 1 <= limit <= 500 or offset < 0:
+			raise ValueError("岗位查询参数无效")
+	except (TypeError, ValueError) as exc:
+		return _json_response({"error": str(exc)}, 400)
 
 	db = _get_web_db()
 	try:
-		query = "SELECT * FROM jobs"
-		params = []
-		if status_filter:
-			query += " WHERE status = ?"
-			params.append(status_filter)
-		query += " ORDER BY score DESC, created_at DESC LIMIT ? OFFSET ?"
-		params.extend([limit, offset])
-
-		rows = db.execute(query, params).fetchall()
-		jobs = [dict(row) for row in rows]
+		jobs, total = query_jobs(db, deleted=deleted, limit=limit, offset=offset)
+		response.headers["X-Total-Count"] = str(total)
 		return _json_response(jobs)
 	finally:
 		db.close()
@@ -691,7 +694,7 @@ def api_job_search():
 		return _json_response({"error": str(exc)}, 400)
 
 	query = "SELECT * FROM jobs"
-	conditions = []
+	conditions = ["deleted_at IS NULL"]
 	params = []
 	keyword = (request.query.getunicode("q") or "").strip()
 	status_filter = request.params.get("status", "").strip()
@@ -717,7 +720,7 @@ def api_job_search():
 
 	db = _get_web_db()
 	try:
-		all_total = db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+		all_total = db.execute("SELECT COUNT(*) FROM jobs WHERE deleted_at IS NULL").fetchone()[0]
 		rows = [dict(row) for row in db.execute(query, params).fetchall()]
 		if salary_min is not None or salary_max is not None:
 			filtered_rows = []
@@ -840,7 +843,8 @@ def api_workbench_task_start():
 		messages = _preflight_messages(mode, load_config(CONFIG_PATH))
 		if messages:
 			return _json_response({"error": "请先处理启动前检查", "messages": messages}, 400)
-		task = task_runner.start(mode, _task_config())
+		with job_mutation_lock:
+			task = task_runner.start(mode, _task_config())
 		return _json_response(task)
 	except TaskAlreadyRunningError as e:
 		return _json_response({"error": str(e)}, 409)
@@ -865,6 +869,21 @@ def api_workbench_deliver():
 		job_ids = [str(job_id) for job_id in body.get("job_ids", []) if str(job_id)]
 		if not job_ids:
 			return _json_response({"error": "请选择要投递的岗位"}, 400)
+		validation_db = _get_web_db()
+		try:
+			placeholders = ",".join("?" for _ in job_ids)
+			active_ids = {
+				str(row["id"])
+				for row in validation_db.execute(
+					f"SELECT id FROM jobs WHERE deleted_at IS NULL AND id IN ({placeholders})",
+					job_ids,
+				).fetchall()
+			}
+		finally:
+			validation_db.close()
+		invalid_ids = [job_id for job_id in job_ids if job_id not in active_ids]
+		if invalid_ids:
+			return _json_response({"error": "所选岗位不存在或已进入回收站", "invalid_ids": invalid_ids}, 409)
 
 		direct_send = bool(body.get("direct_send"))
 		status = task_runner.status()
@@ -956,6 +975,17 @@ def api_workbench_reject():
 
 		db = _get_web_db()
 		try:
+			placeholders = ",".join("?" for _ in job_ids)
+			active_ids = {
+				str(row["id"])
+				for row in db.execute(
+					f"SELECT id FROM jobs WHERE deleted_at IS NULL AND id IN ({placeholders})",
+					job_ids,
+				).fetchall()
+			}
+			invalid_ids = [job_id for job_id in job_ids if job_id not in active_ids]
+			if invalid_ids:
+				return _json_response({"error": "所选岗位不存在或已进入回收站", "invalid_ids": invalid_ids}, 409)
 			for job_id in job_ids:
 				update_job_status(db, job_id, "rejected")
 				add_history(db, job_id, "rejected", "Web Dashboard 放弃投递")
@@ -971,7 +1001,7 @@ def api_workbench_reject():
 def api_job_detail(job_id):
 	db = _get_web_db()
 	try:
-		row = db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+		row = db.execute("SELECT * FROM jobs WHERE id = ? AND deleted_at IS NULL", (job_id,)).fetchone()
 		if not row:
 			return _json_response({"error": "岗位不存在"}, 404)
 		return _json_response(dict(row))
@@ -983,6 +1013,9 @@ def api_job_detail(job_id):
 def api_job_mark_resume_sent(job_id):
 	db = _get_web_db()
 	try:
+		row = db.execute("SELECT 1 FROM jobs WHERE id = ? AND deleted_at IS NULL", (job_id,)).fetchone()
+		if not row:
+			return _json_response({"error": "岗位不存在或已进入回收站"}, 404)
 		update_job_status(db, job_id, "resume_sent")
 		add_history(db, job_id, "resume_sent", "Web Dashboard 标记定制简历已发送")
 		return _json_response({"success": True})
@@ -994,7 +1027,7 @@ def api_job_mark_resume_sent(job_id):
 def api_job_resume_download(job_id):
 	db = _get_web_db()
 	try:
-		row = db.execute("SELECT resume_path FROM jobs WHERE id = ?", (job_id,)).fetchone()
+		row = db.execute("SELECT resume_path FROM jobs WHERE id = ? AND deleted_at IS NULL", (job_id,)).fetchone()
 		if not row or not row["resume_path"]:
 			return _json_response({"error": "定制简历不存在"}, 404)
 		resume_path = Path(row["resume_path"])
@@ -1227,6 +1260,96 @@ def api_jobs_export():
 		return _json_response({"error": str(exc)}, 400)
 	except Exception:
 		return _json_response({"error": "岗位导出失败"}, 500)
+	finally:
+		db.close()
+
+
+def _job_action_payload():
+	body = request.json or {}
+	if not isinstance(body, dict):
+		raise ValueError("请求体必须是对象")
+	job_ids = body.get("job_ids")
+	if not isinstance(job_ids, list):
+		raise ValueError("岗位 ID 必须是数组")
+	return body, job_ids
+
+
+def _job_action_error(exc: ValueError):
+	payload = {"error": str(exc), "code": getattr(exc, "code", "invalid_request")}
+	if isinstance(exc, JobDeletionConflictError):
+		payload["blocked"] = exc.blocked
+		payload["not_found"] = exc.not_found
+	return _json_response(payload, 409 if isinstance(exc, JobDeletionConflictError) else 400)
+
+
+def _active_task_mutation_error():
+	active = task_runner.status().get("active")
+	if not active:
+		return None
+	return _json_response({
+		"error": f"当前后台任务「{active.get('label', '未知任务')}」仍在运行，请停止或等待结束后再操作回收站",
+		"code": "active_task_conflict",
+		"task_id": active.get("id"),
+	}, 409)
+
+
+@app.route("/api/jobs/soft-delete", method="POST")
+def api_jobs_soft_delete():
+	db = _get_web_db()
+	try:
+		body, job_ids = _job_action_payload()
+		with job_mutation_lock:
+			conflict = _active_task_mutation_error()
+			if conflict is not None:
+				return conflict
+			result = soft_delete_jobs(
+				db,
+				job_ids,
+				confirmed=body.get("confirmed") is True,
+				reason=str(body.get("reason") or "用户移入回收站"),
+			)
+		return _json_response(result)
+	except (ValueError, JobDeletionConflictError) as exc:
+		return _job_action_error(exc)
+	finally:
+		db.close()
+
+
+@app.route("/api/jobs/restore", method="POST")
+def api_jobs_restore():
+	db = _get_web_db()
+	try:
+		body, job_ids = _job_action_payload()
+		with job_mutation_lock:
+			conflict = _active_task_mutation_error()
+			if conflict is not None:
+				return conflict
+			result = restore_jobs(db, job_ids, confirmed=body.get("confirmed") is True)
+		return _json_response(result)
+	except (ValueError, JobDeletionConflictError) as exc:
+		return _job_action_error(exc)
+	finally:
+		db.close()
+
+
+@app.route("/api/jobs/permanent-delete", method="POST")
+def api_jobs_permanent_delete():
+	db = _get_web_db()
+	try:
+		body, job_ids = _job_action_payload()
+		with job_mutation_lock:
+			conflict = _active_task_mutation_error()
+			if conflict is not None:
+				return conflict
+			result = permanent_delete_jobs(
+				db,
+				job_ids,
+				confirmed=body.get("confirmed") is True,
+				confirmation=body.get("confirmation", ""),
+			)
+		return _json_response(result)
+	except (ValueError, JobDeletionConflictError) as exc:
+		return _job_action_error(exc)
 	finally:
 		db.close()
 
