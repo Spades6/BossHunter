@@ -256,7 +256,7 @@ def _preflight_messages(mode: str, config: dict) -> list[str]:
 	profile = config.get("profile", {})
 	resume_path = profile.get("resume_path", "")
 	if not resume_path or not Path(str(resume_path)).exists():
-		messages.append("请先在配置页上传 .md 或 .docx 简历。")
+		messages.append("请先在配置页上传 .md、.docx 或 .pdf 简历。")
 
 	if mode in {"full", "collect"} and not config.get("search", {}).get("keywords"):
 		messages.append("请先在配置页填写搜索关键词。")
@@ -479,12 +479,15 @@ def _execute_full(task: WorkbenchTask, config: dict) -> None:
 		db.close()
 	if not pending_confirmation:
 		task.context["waiting_confirmation"] = False
+		task.context["confirmation_complete"] = True
 		_log(task, "没有待确认岗位，流程结束")
 		return
 
 	confirmation_event = Event()
-	task.context["waiting_confirmation"] = True
 	task.context["confirmation_event"] = confirmation_event
+	task.context["waiting_confirmation"] = True
+	if task.context.get("delivery_requested"):
+		confirmation_event.set()
 	_log(task, "等待前端确认投递")
 	while not task.stop_requested.is_set() and not confirmation_event.wait(0.5):
 		pass
@@ -492,11 +495,13 @@ def _execute_full(task: WorkbenchTask, config: dict) -> None:
 		return
 
 	job_ids = [str(job_id) for job_id in task.context.get("confirmed_job_ids", []) if str(job_id)]
+	task.context["waiting_confirmation"] = False
+	task.context["confirmation_complete"] = True
+	task.context["delivery_requested"] = False
 	if not job_ids:
 		_log(task, "未收到前端确认岗位，流程结束")
 		return
 
-	task.context["waiting_confirmation"] = False
 	_log(task, f"前端已确认 {len(job_ids)} 个岗位，继续投递")
 	# The user may adjust the daily limit or other send settings while reviewing
 	# jobs. Reload immediately before delivery instead of using the task-start snapshot.
@@ -1103,15 +1108,6 @@ def api_workbench_deliver():
 		status = task_runner.status()
 		active_task = status.get("active") or {}
 		active_runtime_task = task_runner._tasks.get(active_task.get("id"))
-		waiting_task = None
-		if (
-			not direct_send
-			and active_runtime_task
-			and active_runtime_task.mode == "full"
-			and active_runtime_task.status == "running"
-			and active_runtime_task.context.get("waiting_confirmation")
-		):
-			waiting_task = active_runtime_task
 		monitoring_task = None
 		if (
 			active_runtime_task
@@ -1126,6 +1122,17 @@ def api_workbench_deliver():
 			and active_runtime_task.context.get("delivering")
 		):
 			delivery_task = active_runtime_task
+		waiting_task = None
+		if (
+			not direct_send
+			and active_runtime_task
+			and active_runtime_task.mode == "full"
+			and active_runtime_task.status == "running"
+			and not monitoring_task
+			and not delivery_task
+			and not active_runtime_task.context.get("confirmation_complete")
+		):
+			waiting_task = active_runtime_task
 		if active_task and not waiting_task and not monitoring_task and not delivery_task:
 			raise TaskAlreadyRunningError(
 				f"当前已有后台任务「{active_task.get('label', '未知任务')}」正在运行或停止中，请等待其完全结束"
@@ -1154,6 +1161,7 @@ def api_workbench_deliver():
 
 		if waiting_task:
 			waiting_task.context["confirmed_job_ids"] = job_ids
+			waiting_task.context["delivery_requested"] = True
 			confirmation_event = waiting_task.context.get("confirmation_event")
 			if isinstance(confirmation_event, Event):
 				confirmation_event.set()

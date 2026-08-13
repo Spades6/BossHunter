@@ -338,7 +338,7 @@ A: 存在风险。本项目通过低频、随机间隔、时间窗口和人工�
 A: 支持官方 Anthropic、Anthropic Messages 兼容接口和 OpenAI 兼容的 Chat Completions 接口。兼容服务需要自行填写 Base URL、API Key 与模型名。
 
 ### Q: 简历是什么格式？
-A: 支持 Markdown（`.md`）和 Word（`.docx`）简历；Word 文件会在本地转换为 Markdown 后使用。旧版二进制 `.doc` 暂不支持。AI 会根据具体岗位 JD 动态生成定制简历，并输出 PDF。
+A: 支持 Markdown（`.md`）、Word（`.docx`）和带文字层的 PDF（`.pdf`）简历；Word 与 PDF 会在本地转换为 Markdown 后使用。加密、损坏、扫描版或无文字层 PDF 会给出明确提示，扫描版请先 OCR。旧版二进制 `.doc` 暂不支持。AI 会根据具体岗位 JD 动态生成定制简历，并输出 PDF。
 
 ### Q: 为什么需要 Chrome 远程调试？
 A: 项目通过 CDP (Chrome DevTools Protocol) 直连你日常使用的浏览器，天然携带登录态，无需保存招聘平台账号密码。
@@ -472,34 +472,28 @@ BossHunter 感谢每一位参与改进的开发者。下面的榜单记录外部
 ```mermaid
 pie showData
     title 已采纳贡献的影响力占比
-    "GioiaZheng" : 23
-    "atticus-zhou" : 17
-    "haohao-fly" : 15
-    "zhenian-666" : 15
-    "meixiaoxie" : 14
-    "yukinoshi" : 10
-    "elowenzhouyb-source" : 6
+    "GioiaZheng" : 21
+    "atticus-zhou" : 16
+    "haohao-fly" : 14
+    "zhenian-666" : 14
+    "meixiaoxie" : 13
+    "yukinoshi" : 9
+    "Nourishman" : 8
+    "elowenzhouyb-source" : 5
 ```
 
 | 排名 | 贡献者 | 贡献度 | 状态 | 主要贡献 | 相关 PR |
 |:---:|---|:---:|:---:|---|---|
-| 🥇 | [@GioiaZheng](https://github.com/GioiaZheng) | **23%** | ✅ 已合并 | 🛡️ API Key 脱敏与安全读取；PDF 依赖降级；修正人工确认、招呼语和发送的岗位选择；清理未支持的服务商说明 | [#6](https://github.com/powerycy/BossHunter/pull/6) · [#7](https://github.com/powerycy/BossHunter/pull/7) · [#8](https://github.com/powerycy/BossHunter/pull/8) · [#9](https://github.com/powerycy/BossHunter/pull/9) · [#10](https://github.com/powerycy/BossHunter/pull/10) · [#12](https://github.com/powerycy/BossHunter/pull/12) |
-| 🥈 | [@atticus-zhou](https://github.com/atticus-zhou) | **17%** | ✅ 已合并 | 🤖 实现 AI 评分与招呼语重试、前台浏览器交互、送达状态验证和防重复发送 | [#27](https://github.com/powerycy/BossHunter/pull/27) → [#28](https://github.com/powerycy/BossHunter/pull/28) |
-| 🥉 | [@haohao-fly](https://github.com/haohao-fly) | **15%** | ✅ 已合并 | 📊 岗位筛选、分页与统计；结构化评分与失败重试；投递队列和重复任务保护 | [#38](https://github.com/powerycy/BossHunter/pull/38) → [#39](https://github.com/powerycy/BossHunter/pull/39) |
-| 4 | [@zhenian-666](https://github.com/zhenian-666) | **15%** | ✅ 已合并 | 📦 多范围岗位导出、离线城市目录、任务安全的回收站、独立 AI 评分与失败恢复 | [#40](https://github.com/powerycy/BossHunter/pull/40) → [#41](https://github.com/powerycy/BossHunter/pull/41) · [#42](https://github.com/powerycy/BossHunter/pull/42) · [#43](https://github.com/powerycy/BossHunter/pull/43) |
-| 5 | [@meixiaoxie](https://github.com/meixiaoxie) | **14%** | ✅ 已合并 | 🔐 配置原子写入与无凭据下载；公司屏蔽；自定义城市查询；Windows WSGI 回归测试 | [#37](https://github.com/powerycy/BossHunter/pull/37) → [#39](https://github.com/powerycy/BossHunter/pull/39) |
-| 6 | [@yukinoshi](https://github.com/yukinoshi) | **10%** | ✅ 已合并 | 🧠 Thinking 模式、多 AI 响应兼容和 Windows JavaScript MIME 兼容 | [#25](https://github.com/powerycy/BossHunter/pull/25) → [#28](https://github.com/powerycy/BossHunter/pull/28) |
-| 7 | [@elowenzhouyb-source](https://github.com/elowenzhouyb-source) | **6%** | ✅ 已合并 | 🧭 提交并组织 AI 评分、招呼语与发送可靠性改进方案，推动问题定位和整体验证 | [#27](https://github.com/powerycy/BossHunter/pull/27) → [#28](https://github.com/powerycy/BossHunter/pull/28) |
+| 🥇 | [@GioiaZheng](https://github.com/GioiaZheng) | **21%** | ✅ 已合并 | 🛡️ API Key 脱敏与安全读取；PDF 依赖降级；修正人工确认、招呼语和发送的岗位选择；清理未支持的服务商说明 | [#6](https://github.com/powerycy/BossHunter/pull/6) · [#7](https://github.com/powerycy/BossHunter/pull/7) · [#8](https://github.com/powerycy/BossHunter/pull/8) · [#9](https://github.com/powerycy/BossHunter/pull/9) · [#10](https://github.com/powerycy/BossHunter/pull/10) · [#12](https://github.com/powerycy/BossHunter/pull/12) |
+| 🥈 | [@atticus-zhou](https://github.com/atticus-zhou) | **16%** | ✅ 已合并 | 🤖 实现 AI 评分与招呼语重试、前台浏览器交互、送达状态验证和防重复发送 | [#27](https://github.com/powerycy/BossHunter/pull/27) → [#28](https://github.com/powerycy/BossHunter/pull/28) |
+| 🥉 | [@haohao-fly](https://github.com/haohao-fly) | **14%** | ✅ 已合并 | 📊 岗位筛选、分页与统计；结构化评分与失败重试；投递队列和重复任务保护 | [#38](https://github.com/powerycy/BossHunter/pull/38) → [#39](https://github.com/powerycy/BossHunter/pull/39) |
+| 4 | [@zhenian-666](https://github.com/zhenian-666) | **14%** | ✅ 已合并 | 📦 多范围岗位导出、离线城市目录、任务安全的回收站、独立 AI 评分与失败恢复 | [#40](https://github.com/powerycy/BossHunter/pull/40) → [#41](https://github.com/powerycy/BossHunter/pull/41) · [#42](https://github.com/powerycy/BossHunter/pull/42) · [#43](https://github.com/powerycy/BossHunter/pull/43) |
+| 5 | [@meixiaoxie](https://github.com/meixiaoxie) | **13%** | ✅ 已合并 | 🔐 配置原子写入与无凭据下载；公司屏蔽；自定义城市查询；Windows WSGI 回归测试 | [#37](https://github.com/powerycy/BossHunter/pull/37) → [#39](https://github.com/powerycy/BossHunter/pull/39) |
+| 6 | [@yukinoshi](https://github.com/yukinoshi) | **9%** | ✅ 已合并 | 🧠 Thinking 模式、多 AI 响应兼容和 Windows JavaScript MIME 兼容 | [#25](https://github.com/powerycy/BossHunter/pull/25) → [#28](https://github.com/powerycy/BossHunter/pull/28) |
+| 7 | [@Nourishman](https://github.com/Nourishman) | **8%** | ✅ PR #29 部分改进已适配合入 | 📄 带文字层 PDF 简历上传与错误提示；DeepSeek 模型 ID 调用期规范化；已批准岗位恢复与确认交接竞态修复 | [#29](https://github.com/powerycy/BossHunter/pull/29) |
+| 8 | [@elowenzhouyb-source](https://github.com/elowenzhouyb-source) | **5%** | ✅ 已合并 | 🧭 提交并组织 AI 评分、招呼语与发送可靠性改进方案，推动问题定位和整体验证 | [#27](https://github.com/powerycy/BossHunter/pull/27) → [#28](https://github.com/powerycy/BossHunter/pull/28) |
 
-### 🔎 评审中的贡献
-
-这些贡献会完整保留署名，但在关键问题修复并被项目采纳前，不计入上面的百分比。
-
-| 贡献者 | 当前状态 | 提议的主要功能 | PR |
-|---|:---:|---|---|
-| [@Nourishman](https://github.com/Nourishman) | 🟡 待拆分评审 | Windows 启停、PDF 简历、工作流停止与 HR 简历处理 | [#29](https://github.com/powerycy/BossHunter/pull/29) |
-
-> **计算口径**：产品影响 40% + 可靠性与安全 25% + 测试与可维护性 20% + 采纳状态 15%。百分比在已合并的外部人类贡献中归一化，不代表代码所有权、奖金分配或单纯的代码行数。项目发起人和 AI 工具提交不参与本榜单。数据更新于 **2026-08-13**；如署名或功能描述需要修正，欢迎提交 Issue。
+> **计算口径**：产品影响 40% + 可靠性与安全 25% + 测试与可维护性 20% + 采纳状态 15%。本次按实际适配合入的三类低风险改进，保守计入 Nourishman **8%**；Windows 启停、发送安全行为、旧文档与已被当前版本覆盖的停止逻辑均未计入。为保持总和 100%，其他已采纳贡献按原比例近似缩放并取整。百分比不代表代码所有权、奖金分配或单纯的代码行数。项目发起人和 AI 工具提交不参与本榜单。数据更新于 **2026-08-13**；如署名或功能描述需要修正，欢迎提交 Issue。
 
 ---
 

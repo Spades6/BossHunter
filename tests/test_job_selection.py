@@ -604,6 +604,29 @@ class JobSelectionTests(unittest.TestCase):
 
         self.assertEqual([job["id"] for job in jobs], ["scored"])
 
+    def test_pending_confirmation_keeps_approved_jobs_without_greetings_recoverable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = get_db(Path(tmp) / "bosshunter.db")
+            try:
+                insert_job(db, _job("approved"))
+                update_job_score(db, "approved", 88, "good match")
+                update_job_status(db, "approved", "approved")
+
+                insert_job(db, _job("deleted-approved"))
+                update_job_score(db, "deleted-approved", 90, "great match")
+                update_job_status(db, "deleted-approved", "approved")
+                db.execute(
+                    "UPDATE jobs SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    ("deleted-approved",),
+                )
+                db.commit()
+
+                jobs = get_jobs_pending_confirmation(db)
+            finally:
+                db.close()
+
+        self.assertEqual([job["id"] for job in jobs], ["approved"])
+
     def test_rescore_reset_only_requeues_jobs_filtered_by_ai_score(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = get_db(Path(tmp) / "bosshunter.db")

@@ -223,8 +223,8 @@ export default function ConfigPage() {
               ) : (
                 <label className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-card-border p-6 transition-colors hover:border-primary/50 hover:bg-[#FFFCFA]">
                   <Upload className="mb-2 h-6 w-6 text-muted" />
-                  <span className="text-sm text-muted">拖拽或点击上传 (.md、.docx)</span>
-                  <input type="file" accept=".md,.docx" onChange={handleResumeUpload} className="hidden" />
+                  <span className="text-sm text-muted">拖拽或点击上传 (.md、.docx、.pdf)</span>
+                  <input type="file" accept=".md,.docx,.pdf,application/pdf" onChange={handleResumeUpload} className="hidden" />
                 </label>
               )}
               {resumeUploadError && (

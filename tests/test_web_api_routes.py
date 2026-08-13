@@ -12,6 +12,8 @@ from wsgiref.simple_server import WSGIServer
 from zipfile import ZipFile
 
 import yaml
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from bosshunter.db import (
     add_history,
@@ -551,6 +553,27 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertIn("application/json", headers["Content-Type"])
         self.assertEqual([job["id"] for job in payload["pending_confirmation"]], ["ready-job"])
 
+    def test_web_api_workbench_shows_approved_job_when_greeting_was_interrupted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("approved-without-greeting"))
+                update_job_score(db, "approved-without-greeting", 84, "good match")
+                update_job_status(db, "approved-without-greeting", "approved")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            status, _, body = self._request("/api/workbench")
+
+        payload = json.loads(body)
+        self.assertTrue(status.startswith("200"), body)
+        self.assertEqual(
+            [job["id"] for job in payload["pending_confirmation"]],
+            ["approved-without-greeting"],
+        )
+
     def test_workbench_returns_today_and_cumulative_funnel_counts(self):
         with tempfile.TemporaryDirectory() as tmp:
             base_dir = Path(tmp)
@@ -816,6 +839,43 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertTrue(confirmation_event.is_set())
         self.assertEqual(full_task.context["confirmed_job_ids"], ["ready-job"])
         self.assertEqual(json.loads(response_body)["id"], "full-task")
+
+    def test_web_api_deliver_queues_confirmation_before_full_task_event_exists(self):
+        full_task = WorkbenchTask(id="full-before-event", mode="full", label="运行全流程")
+        runner = WorkbenchTaskRunner()
+        runner._tasks[full_task.id] = full_task
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("ready-job"))
+                update_job_status(db, "ready-job", "ready")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            with patch.object(server, "task_runner", runner):
+                status, _, body = self._request(
+                    "/api/workbench/deliver",
+                    method="POST",
+                    json_body={"job_ids": ["ready-job"]},
+                )
+
+            verify_db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                job_status = verify_db.execute(
+                    "SELECT status FROM jobs WHERE id = ?",
+                    ("ready-job",),
+                ).fetchone()["status"]
+            finally:
+                verify_db.close()
+
+        self.assertTrue(status.startswith("200"), body)
+        self.assertEqual(json.loads(body)["id"], "full-before-event")
+        self.assertEqual(full_task.context["confirmed_job_ids"], ["ready-job"])
+        self.assertTrue(full_task.context["delivery_requested"])
+        self.assertEqual(job_status, "approved")
 
     def test_web_api_deliver_queues_jobs_while_full_task_is_monitoring(self):
         # Arrange
@@ -1131,6 +1191,39 @@ class WebApiRouteTests(unittest.TestCase):
             ["collect", ("deliver", ["ready-a", "ready-b"], 40), "monitor"],
         )
 
+    def test_full_task_consumes_confirmation_queued_before_event_creation(self):
+        calls = []
+        task = WorkbenchTask(id="queued-before-event", mode="full", label="运行全流程")
+        task.context.update({
+            "confirmed_job_ids": ["approved-a"],
+            "delivery_requested": True,
+        })
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("approved-a"))
+                update_job_score(db, "approved-a", 88, "good match")
+                update_job_status(db, "approved-a", "approved")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            with patch.object(server, "_execute_collect", side_effect=lambda *_: calls.append("collect")), \
+                 patch.object(
+                     server,
+                     "_execute_deliver",
+                     side_effect=lambda _task, config: calls.append(("deliver", config["_workbench_job_ids"])),
+                 ), \
+                 patch.object(server, "_execute_monitor", side_effect=lambda *_: calls.append("monitor")), \
+                 patch.object(server, "load_config", return_value={}):
+                server._execute_full(task, {})
+
+        self.assertEqual(calls, ["collect", ("deliver", ["approved-a"]), "monitor"])
+        self.assertFalse(task.context["waiting_confirmation"])
+        self.assertTrue(task.context["confirmation_complete"])
+
     def test_full_task_sends_previous_confirmed_backlog_before_collecting(self):
         # Arrange
         calls = []
@@ -1426,6 +1519,78 @@ class WebApiRouteTests(unittest.TestCase):
             self.assertIn("# 李雷", stored_content)
             self.assertIn("- 5 年产品经验", stored_content)
 
+    def test_web_api_resume_upload_extracts_text_layer_from_pdf(self):
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=612, height=792)
+        font = DictionaryObject({
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        })
+        page[NameObject("/Resources")] = DictionaryObject({
+            NameObject("/Font"): DictionaryObject({NameObject("/F1"): font}),
+        })
+        contents = DecodedStreamObject()
+        contents.set_data(b"BT /F1 12 Tf 72 720 Td (Jane Resume - Product Manager) Tj ET")
+        page[NameObject("/Contents")] = contents
+        pdf = io.BytesIO()
+        writer.write(pdf)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            (base_dir / "config.yaml").write_text("{}\n", encoding="utf-8")
+            server.set_base_dir(base_dir)
+
+            status, _, body = self._upload_resume("resume.pdf", pdf.getvalue(), "application/pdf")
+            payload = json.loads(body)
+            stored_path = Path(payload["path"])
+            stored_text = stored_path.read_text(encoding="utf-8")
+
+        self.assertTrue(status.startswith("200"), body)
+        self.assertEqual(payload["filename"], "resume.md")
+        self.assertIn("Jane Resume - Product Manager", stored_text)
+
+    def test_web_api_resume_upload_rejects_encrypted_pdf(self):
+        writer = PdfWriter()
+        writer.add_blank_page(width=612, height=792)
+        writer.encrypt("secret")
+        pdf = io.BytesIO()
+        writer.write(pdf)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            (base_dir / "config.yaml").write_text("{}\n", encoding="utf-8")
+            server.set_base_dir(base_dir)
+            status, _, body = self._upload_resume("encrypted.pdf", pdf.getvalue(), "application/pdf")
+
+        self.assertTrue(status.startswith("400"), body)
+        self.assertEqual(json.loads(body), {"error": "PDF 已加密，请上传未加密的简历"})
+
+    def test_web_api_resume_upload_rejects_damaged_pdf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            (base_dir / "config.yaml").write_text("{}\n", encoding="utf-8")
+            server.set_base_dir(base_dir)
+            status, _, body = self._upload_resume("damaged.pdf", b"%PDF-1.7\nbroken", "application/pdf")
+
+        self.assertTrue(status.startswith("400"), body)
+        self.assertEqual(json.loads(body), {"error": "PDF 文件无效或已损坏"})
+
+    def test_web_api_resume_upload_rejects_scanned_pdf_without_text_layer(self):
+        writer = PdfWriter()
+        writer.add_blank_page(width=612, height=792)
+        pdf = io.BytesIO()
+        writer.write(pdf)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            (base_dir / "config.yaml").write_text("{}\n", encoding="utf-8")
+            server.set_base_dir(base_dir)
+            status, _, body = self._upload_resume("scanned.pdf", pdf.getvalue(), "application/pdf")
+
+        self.assertTrue(status.startswith("400"), body)
+        self.assertIn("扫描版或无文字层", json.loads(body)["error"])
+
     def test_web_api_resume_upload_rejects_legacy_doc_format(self):
         # Arrange
         with tempfile.TemporaryDirectory() as tmp:
@@ -1438,7 +1603,7 @@ class WebApiRouteTests(unittest.TestCase):
 
             # Assert
             self.assertTrue(status.startswith("400"), body)
-            self.assertEqual(json.loads(body), {"error": "仅支持 .md 或 .docx 格式"})
+            self.assertEqual(json.loads(body), {"error": "仅支持 .md、.docx 或 .pdf 格式"})
 
     def test_web_api_history_dismiss_reply_adds_dismissed_history_without_rejecting_job(self):
         # Arrange
