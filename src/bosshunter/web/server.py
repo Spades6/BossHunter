@@ -42,6 +42,7 @@ from bosshunter.db import (
 from bosshunter.job_filters import parse_monthly_salary_k
 from bosshunter.web.preflight import check_ai_connection, collect_preflight_checks, error_messages
 from bosshunter.web.resume_upload import ResumeUploadError, prepare_resume_content
+from bosshunter.web.city_lookup import CityLookupError, lookup_city
 from bosshunter.web.tasks import TaskAlreadyRunningError, WorkbenchTask, WorkbenchTaskRunner
 
 mimetypes.add_type("application/javascript", ".js", strict=True)
@@ -1130,6 +1131,16 @@ def api_config_download():
 @app.route("/api/config/cities")
 def api_cities():
 	return _json_response(CITY_CODES)
+
+
+@app.route("/api/config/cities/lookup", method="POST")
+def api_city_lookup():
+	try:
+		body = request.json or {}
+		city = str(body.get("city") or "")
+		return _json_response(lookup_city(city))
+	except CityLookupError as exc:
+		return _json_response({"error": str(exc)}, 400)
 
 
 # ─── Resume APIs ─────────────────────────────────────────

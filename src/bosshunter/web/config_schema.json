@@ -22,6 +22,7 @@
       "fields": [
         {"key": "keywords", "label": "搜索关键词", "type": "tags", "description": "BOSS 搜索框使用的关键词"},
         {"key": "cities", "label": "搜索城市", "type": "multi-select", "options_from": "cities", "description": "留空则使用目标城市"},
+        {"key": "city_codes", "label": "自定义城市编码", "type": "object", "default": {}, "description": "由配置页查询并保存，不需要手工填写"},
         {"key": "max_pages", "label": "每关键词翻页数", "type": "number", "min": 1, "max": 10, "default": 3}
       ]
     },

@@ -24,6 +24,14 @@ console = Console()
 # BOSS直聘搜索页 URL 模板
 SEARCH_URL = "https://www.zhipin.com/web/geek/job?query={keyword}&city={city_code}"
 
+
+def _resolve_city_code(city: str, config: dict) -> str | None:
+    custom_codes = config.get("search", {}).get("city_codes", {})
+    if isinstance(custom_codes, dict) and custom_codes.get(city):
+        return str(custom_codes[city])
+    return CITY_CODES.get(city)
+
+
 # JS: 从搜索列表页提取岗位卡片数据
 JS_EXTRACT_LIST = """
 (() => {
@@ -177,7 +185,7 @@ def scrape_jobs(
     # Build search combinations: city × keyword
     search_combos = []
     for city in cities:
-        city_code = CITY_CODES.get(city)
+        city_code = _resolve_city_code(city, config)
         if not city_code:
             console.print(f"[yellow]⚠ 未识别的城市: {city}，已跳过[/yellow]")
             continue

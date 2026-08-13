@@ -21,6 +21,7 @@ profile:
 search:
   keywords: ["关键词1", "关键词2"]
   cities: ["北京"]
+  city_codes: {}  # 自定义城市名称 -> 平台城市编码，由配置页自动填写
   max_pages: 5
   sort: newest
 
