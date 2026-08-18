@@ -20,6 +20,8 @@ from bosshunter.executor.sender import CHAT_BUTTON_SCRIPT_FOR_TESTS
 from bosshunter.executor.sender import _chat_target_matches_job
 from bosshunter.executor.sender import _confirm_preset_greeting
 from bosshunter.executor.sender import _handle_greet_popup
+from bosshunter.executor.sender import _message_delivery_state
+from bosshunter.executor.sender import _submitted_message_looks_accepted
 from bosshunter.executor.sender import send_greetings
 from bosshunter.executor.sender import _send_greeting_once
 from bosshunter.executor.sender import _submit_chat_message_background
@@ -114,6 +116,33 @@ class JobSelectionTests(unittest.TestCase):
         script = evaluate_mock.call_args.args[1]
         self.assertIn("vue.handleSubmit()", script)
         self.assertIn("enableSubmit", script)
+
+    def test_delivery_check_matches_bubble_text_with_status_labels(self):
+        greeting = "您好，我的经历和岗位需求比较匹配。"
+        with patch(
+            "bosshunter.executor.sender.evaluate",
+            return_value='{"success": true, "state": "delivered"}',
+        ) as evaluate_mock:
+            state = _message_delivery_state("target-1", greeting)
+
+        self.assertEqual(state, "delivered")
+        script = evaluate_mock.call_args.args[1]
+        self.assertIn(".message-content", script)
+        self.assertIn("text.includes(expectedText)", script)
+        self.assertIn("发送中|已读|未读|送达|发送成功|重试|重新发送", script)
+
+    def test_send_acceptance_fallback_requires_cleared_input_without_failure(self):
+        greeting = "您好，我的经历和岗位需求比较匹配。"
+        with patch(
+            "bosshunter.executor.sender.evaluate",
+            return_value='{"success": true, "accepted": true, "inputCleared": true, "hasFailedOwnMessage": false}',
+        ) as evaluate_mock:
+            accepted = _submitted_message_looks_accepted("target-1", greeting)
+
+        self.assertTrue(accepted)
+        script = evaluate_mock.call_args.args[1]
+        self.assertIn("inputCleared && !hasFailedOwnMessage", script)
+        self.assertIn("status-error", script)
 
     def test_startchat_popup_reuses_chat_redirect_without_foreground_input(self):
         click_result = {"redirectUrl": "/web/geek/chat?jobId=first-contact"}
@@ -230,6 +259,35 @@ class JobSelectionTests(unittest.TestCase):
         self.assertIsNone(target_id)
         self.assertTrue(result["success"])
         self.assertEqual(evaluate_mock.call_count, len(evaluate_results))
+        close_tab.assert_called_once_with("target-1")
+
+    def test_send_greeting_accepts_cleared_input_when_echo_is_missing(self):
+        job = {
+            "id": "accepted-without-echo",
+            "company": "Example",
+            "title": "Engineer",
+            "url": "https://www.zhipin.com/job_detail/accepted-without-echo.html",
+        }
+
+        with patch("bosshunter.executor.sender.new_tab", return_value="target-1"), \
+             patch("bosshunter.executor.sender.evaluate", return_value='{"success": true}'), \
+             patch("bosshunter.executor.sender._click_chat_button", return_value={"success": True}), \
+             patch("bosshunter.executor.sender._detect_greet_popup", return_value={"success": True, "popup": False}), \
+             patch("bosshunter.executor.sender._wait_for_chat_page", return_value={"success": True, "target_id": "target-1"}), \
+             patch("bosshunter.executor.sender._message_delivery_state", return_value="missing"), \
+             patch("bosshunter.executor.sender._submit_chat_message_background", return_value={"success": True}), \
+             patch("bosshunter.executor.sender._submitted_message_looks_accepted", return_value=True), \
+             patch("bosshunter.executor.sender.close_tab") as close_tab, \
+             patch("bosshunter.executor.sender.time.sleep"):
+            result, target_id = _send_greeting_once(
+                job,
+                "您好，我对这个岗位很感兴趣。",
+                {"browse_before_greet": False, "_send_verification_attempts": 1},
+            )
+
+        self.assertIsNone(target_id)
+        self.assertTrue(result["success"])
+        self.assertTrue(result["accepted_without_echo"])
         close_tab.assert_called_once_with("target-1")
 
     def test_send_greeting_uses_original_flow_when_platform_preset_is_enabled(self):
