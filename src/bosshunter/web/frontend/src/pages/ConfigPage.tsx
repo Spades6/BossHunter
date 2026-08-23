@@ -349,7 +349,7 @@ export default function ConfigPage() {
         <SectionCard title="搜索设置" sectionKey="search" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">
             <p className="rounded-xl border border-card-border bg-[#FFFCFA] px-3 py-2 text-xs leading-5 text-muted">
-              智联和前程无忧当前只开放采集、评分和招呼语生成；不会执行发送、自动回复或监听。
+              智联和前程无忧只自动采集、评分和生成招呼语；岗位池会提供原平台链接，你完成投递后可手动标记“已发送”。BossHunter 不会替你在这两个平台发送、回复或监听。
             </p>
             {(['boss', 'zhilian', '51job'] as PlatformId[]).map(platform => {
               const search = platformSearch(platform)

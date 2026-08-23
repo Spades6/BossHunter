@@ -10,8 +10,9 @@ DB_PATH = Path("./data/bosshunter.db")
 MAX_JOB_IDS = 1000
 DELETION_PROTECTED_STATUSES = {"sent", "replied", "resume_sent", "needs_resume", "follow_up_sent"}
 DELETION_PROTECTED_HISTORY_ACTIONS = {
-    "sent", "replied", "resume_sent", "needs_resume", "follow_up_sent", "reply_pending", "auto_replied",
+    "sent", "manual_sent", "replied", "resume_sent", "needs_resume", "follow_up_sent", "reply_pending", "auto_replied",
 }
+EXTERNAL_MANUAL_SEND_PLATFORMS = {"zhilian", "51job"}
 
 
 class JobDeletionConfirmationError(ValueError):
@@ -20,6 +21,15 @@ class JobDeletionConfirmationError(ValueError):
 
 class JobDeletionConflictError(ValueError):
     code = "deletion_conflict"
+
+    def __init__(self, message: str, *, blocked: list[dict[str, Any]] | None = None, not_found: list[str] | None = None):
+        super().__init__(message)
+        self.blocked = blocked or []
+        self.not_found = not_found or []
+
+
+class JobManualSentConflictError(ValueError):
+    code = "manual_sent_conflict"
 
     def __init__(self, message: str, *, blocked: list[dict[str, Any]] | None = None, not_found: list[str] | None = None):
         super().__init__(message)
@@ -281,6 +291,59 @@ def restore_jobs(conn: sqlite3.Connection, job_ids: Any, *, confirmed: bool = Fa
         "affected_count": len(deleted_rows),
         "not_found": [job_id for job_id in ids if job_id not in found_ids],
         "already_active": [str(row["id"]) for row in rows if row.get("deleted_at") is None],
+    }
+
+
+def mark_external_jobs_sent(conn: sqlite3.Connection, job_ids: Any, *, confirmed: bool = False) -> dict[str, Any]:
+    """Record user-confirmed sends for collection-only platforms without automating them."""
+    if confirmed is not True:
+        raise JobDeletionConfirmationError("标记已发送需要 confirmed=true")
+    ids = _normalize_job_ids(job_ids, required=True)
+    rows = _job_rows_by_ids(conn, ids)
+    found_ids = {str(row["id"]) for row in rows}
+    not_found = [job_id for job_id in ids if job_id not in found_ids]
+    if not_found:
+        raise JobManualSentConflictError("存在不存在的岗位，未执行标记", not_found=not_found)
+
+    completed_statuses = {"sent", "replied", "resume_sent", "needs_resume", "follow_up_sent"}
+    already_sent: list[str] = []
+    blocked: list[dict[str, Any]] = []
+    pending_rows: list[dict[str, Any]] = []
+    for row in rows:
+        job_id = str(row["id"])
+        reasons: list[str] = []
+        platform = str(row.get("source_platform") or "boss")
+        if row.get("deleted_at") is not None:
+            reasons.append("岗位已进入回收站")
+        if platform not in EXTERNAL_MANUAL_SEND_PLATFORMS:
+            reasons.append("仅智联招聘和前程无忧支持手动标记已发送")
+        if reasons:
+            blocked.append({"job_id": job_id, "reasons": reasons})
+        elif str(row.get("status") or "") in completed_statuses:
+            already_sent.append(job_id)
+        else:
+            pending_rows.append(row)
+    if blocked:
+        raise JobManualSentConflictError("存在不允许手动标记的岗位，批量操作已整体拒绝", blocked=blocked)
+
+    platform_labels = {"zhilian": "智联招聘", "51job": "前程无忧"}
+    with conn:
+        for row in pending_rows:
+            job_id = str(row["id"])
+            platform = str(row.get("source_platform") or "")
+            detail = f"用户在{platform_labels[platform]}完成投递后手动标记"
+            conn.execute(
+                "UPDATE jobs SET status = 'sent', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL",
+                (job_id,),
+            )
+            conn.execute(
+                "INSERT INTO history (job_id, action, detail) VALUES (?, 'manual_sent', ?)",
+                (job_id, detail),
+            )
+    return {
+        "requested_count": len(ids),
+        "affected_count": len(pending_rows),
+        "already_sent": already_sent,
     }
 
 

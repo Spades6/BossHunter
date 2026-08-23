@@ -27,6 +27,7 @@ from bosshunter.cities import CityRefreshError, get_city_map, load_city_snapshot
 from bosshunter.config import AI_SERVICE_PRESETS, load_config
 from bosshunter.db import (
 	JobDeletionConflictError,
+	JobManualSentConflictError,
 	add_history,
 	count_unresolved_monitor_items,
 	get_daily_activity,
@@ -40,6 +41,7 @@ from bosshunter.db import (
 	get_unresolved_resume_failures,
 	get_stats,
 	get_top_companies,
+	mark_external_jobs_sent,
 	permanent_delete_jobs,
 	query_jobs,
 	restore_jobs,
@@ -999,10 +1001,20 @@ def api_workbench():
 			"pending_confirmation": [
 				job for job in get_jobs_pending_confirmation(db)
 				if int(job.get("score") or 0) >= threshold
+				and platform_supports(str(job.get("source_platform") or "boss"), "deliver")
 			],
-			"pending_greetings": get_jobs_ready_to_send(db),
-			"send_errors": get_jobs_with_send_errors(db),
-			"needs_resume": get_jobs_needing_resume(db),
+			"pending_greetings": [
+				job for job in get_jobs_ready_to_send(db)
+				if platform_supports(str(job.get("source_platform") or "boss"), "deliver")
+			],
+			"send_errors": [
+				job for job in get_jobs_with_send_errors(db)
+				if platform_supports(str(job.get("source_platform") or "boss"), "deliver")
+			],
+			"needs_resume": [
+				job for job in get_jobs_needing_resume(db)
+				if platform_supports(str(job.get("source_platform") or "boss"), "deliver")
+			],
 			"send_quota": {
 				"daily_limit": daily_limit,
 				"sent": today_sent,
@@ -1769,10 +1781,10 @@ def _job_action_payload():
 
 def _job_action_error(exc: ValueError):
 	payload = {"error": str(exc), "code": getattr(exc, "code", "invalid_request")}
-	if isinstance(exc, JobDeletionConflictError):
+	if isinstance(exc, (JobDeletionConflictError, JobManualSentConflictError)):
 		payload["blocked"] = exc.blocked
 		payload["not_found"] = exc.not_found
-	return _json_response(payload, 409 if isinstance(exc, JobDeletionConflictError) else 400)
+	return _json_response(payload, 409 if isinstance(exc, (JobDeletionConflictError, JobManualSentConflictError)) else 400)
 
 
 def _active_task_mutation_error():
@@ -1780,7 +1792,7 @@ def _active_task_mutation_error():
 	if not active:
 		return None
 	return _json_response({
-		"error": f"当前后台任务「{active.get('label', '未知任务')}」仍在运行，请停止或等待结束后再操作回收站",
+		"error": f"当前后台任务「{active.get('label', '未知任务')}」仍在运行，请停止或等待结束后再修改岗位状态",
 		"code": "active_task_conflict",
 		"task_id": active.get("id"),
 	}, 409)
@@ -1820,6 +1832,27 @@ def api_jobs_restore():
 			result = restore_jobs(db, job_ids, confirmed=body.get("confirmed") is True)
 		return _json_response(result)
 	except (ValueError, JobDeletionConflictError) as exc:
+		return _job_action_error(exc)
+	finally:
+		db.close()
+
+
+@app.route("/api/jobs/manual-sent", method="POST")
+def api_jobs_manual_sent():
+	db = _get_web_db()
+	try:
+		body, job_ids = _job_action_payload()
+		with job_mutation_lock:
+			conflict = _active_task_mutation_error()
+			if conflict is not None:
+				return conflict
+			result = mark_external_jobs_sent(
+				db,
+				job_ids,
+				confirmed=body.get("confirmed") is True,
+			)
+		return _json_response(result)
+	except (ValueError, JobManualSentConflictError) as exc:
 		return _job_action_error(exc)
 	finally:
 		db.close()

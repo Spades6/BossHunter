@@ -1112,6 +1112,26 @@ function JobsPoolView() {
     }
   }
 
+  const markManuallySent = async (job: Job) => {
+    if (job.source_platform !== 'zhilian' && job.source_platform !== '51job') return
+    const platformLabel = job.source_platform === 'zhilian' ? '智联招聘' : '前程无忧'
+    if (!window.confirm(`请确认：你已经在${platformLabel}完成了这个岗位的投递。此操作只更新 BossHunter 本地记录，不会向平台发送任何内容。`)) return
+    try {
+      const result = await postJobAction('/api/jobs/manual-sent', {
+        job_ids: [job.id],
+        confirmed: true,
+      })
+      refreshJobs()
+      setNotice(
+        result.affected_count
+          ? `已将 ${platformLabel} 岗位标记为“已发送”。`
+          : `该岗位此前已经标记为“已发送”。`
+      )
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : '标记已发送失败')
+    }
+  }
+
   const deliverSelectedJobs = async () => {
     if (!selectedIds.length) return
     const count = selectedIds.length
@@ -1300,7 +1320,7 @@ function JobsPoolView() {
         {selectedIds.length > 0 && <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>清空选择</Button>}
         <Button variant="destructive" size="sm" disabled={!selectedIds.length} onClick={() => void softDelete(selectedIds)}>移入回收站</Button>
         <Button size="sm" disabled={!selectedIds.length} onClick={() => void deliverSelectedJobs()}>
-          <Send className="mr-1 h-4 w-4" />一键投递已选
+          <Send className="mr-1 h-4 w-4" />BOSS 一键投递已选
         </Button>
         <Button size="sm" onClick={() => void startQuickScoring()} disabled={quickScoring || !total}>
           {quickScoring ? '启动评分中…' : '一键 AI 评分'}
@@ -1336,6 +1356,7 @@ function JobsPoolView() {
         selectedIds={selectedIds}
         onToggleSelected={toggleSelected}
         onSoftDelete={job => void softDelete([job.id])}
+        onMarkManuallySent={job => void markManuallySent(job)}
         loading={loading}
         sortBy={sortBy}
         sortOrder={sortOrder}

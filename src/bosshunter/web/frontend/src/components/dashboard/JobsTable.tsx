@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ChevronUp, ExternalLink, Trash2 } from 'lucide-react'
 import { getStatusLabel } from '@/lib/status'
 import type { Job } from '@/hooks/useDashboard'
 import type { JobSortKey, JobSortOrder } from '@/hooks/useJobSearch'
@@ -15,10 +15,24 @@ interface JobsTableProps {
   selectedIds: string[]
   onToggleSelected: (id: string) => void
   onSoftDelete?: (job: Job) => void
+  onMarkManuallySent?: (job: Job) => void
   loading?: boolean
   sortBy: JobSortKey
   sortOrder: JobSortOrder
   onSortChange: (sortBy: JobSortKey) => void
+}
+
+function safeExternalJobUrl(job: Job): string | null {
+  if (job.source_platform !== 'zhilian' && job.source_platform !== '51job') return null
+  try {
+    const parsed = new URL(job.url || '')
+    if (parsed.protocol !== 'https:') return null
+    const rootDomain = job.source_platform === 'zhilian' ? 'zhaopin.com' : '51job.com'
+    if (parsed.hostname !== rootDomain && !parsed.hostname.endsWith(`.${rootDomain}`)) return null
+    return parsed.toString()
+  } catch {
+    return null
+  }
 }
 
 function statusVariant(status: string) {
@@ -40,10 +54,11 @@ function statusVariant(status: string) {
   return variants.has(status) ? status : 'default'
 }
 
-export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedIds, onToggleSelected, onSoftDelete, loading = false, sortBy, sortOrder, onSortChange }: JobsTableProps) {
+export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedIds, onToggleSelected, onSoftDelete, onMarkManuallySent, loading = false, sortBy, sortOrder, onSortChange }: JobsTableProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [pageInput, setPageInput] = useState(String(page + 1))
   const totalPages = Math.ceil(total / pageSize)
+  const hasActions = Boolean(onSoftDelete || onMarkManuallySent)
 
   useEffect(() => {
     setPageInput(String(page + 1))
@@ -110,12 +125,15 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
                 <th className="px-4 py-3 text-left">{sortableHeader('状态', 'status')}</th>
                 <th className="px-4 py-3 text-left">{sortableHeader('招聘者活跃', 'hr_active')}</th>
                 <th className="px-4 py-3 text-left">{sortableHeader('时间', 'created_at')}</th>
-                {onSoftDelete && <th className="w-16 px-3 py-3 text-center font-bold">操作</th>}
+                {hasActions && <th className="min-w-[210px] px-3 py-3 text-center font-bold">操作</th>}
               </tr>
             </thead>
             <tbody>
               {jobs.map(job => {
                 const isExpanded = expanded === job.id
+                const isExternalPlatform = job.source_platform === 'zhilian' || job.source_platform === '51job'
+                const externalUrl = safeExternalJobUrl(job)
+                const alreadySent = ['sent', 'replied', 'resume_sent', 'needs_resume', 'follow_up_sent'].includes(job.status)
                 return (
                   <Fragment key={job.id}>
                     <tr
@@ -162,17 +180,39 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
                           {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                         </div>
                       </td>
-                      {onSoftDelete && (
-                        <td className="px-3 py-3 text-center" onClick={event => event.stopPropagation()}>
-                          <button type="button" onClick={() => onSoftDelete(job)} className="rounded-lg p-2 text-muted hover:bg-red-50 hover:text-danger" aria-label={`将 ${job.company} ${job.title} 移入回收站`}>
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                      {hasActions && (
+                        <td className="px-3 py-3" onClick={event => event.stopPropagation()}>
+                          <div className="flex flex-wrap items-center justify-center gap-1.5">
+                            {isExternalPlatform && externalUrl && (
+                              <a href={externalUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-card-border px-2 py-1.5 text-[11px] font-bold text-primary hover:bg-[#FFF0E5]">
+                                <ExternalLink className="h-3.5 w-3.5" />打开平台
+                              </a>
+                            )}
+                            {isExternalPlatform && !externalUrl && (
+                              <span className="rounded-lg bg-amber-50 px-2 py-1.5 text-[11px] font-bold text-amber-700">链接不可用</span>
+                            )}
+                            {isExternalPlatform && onMarkManuallySent && (
+                              <button
+                                type="button"
+                                disabled={alreadySent}
+                                onClick={() => onMarkManuallySent(job)}
+                                className="inline-flex items-center gap-1 rounded-lg bg-primary px-2 py-1.5 text-[11px] font-bold text-white hover:opacity-90 disabled:bg-emerald-50 disabled:text-emerald-700 disabled:opacity-100"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />{alreadySent ? '已发送' : '我已发送'}
+                              </button>
+                            )}
+                            {onSoftDelete && (
+                              <button type="button" onClick={() => onSoftDelete(job)} className="rounded-lg p-2 text-muted hover:bg-red-50 hover:text-danger" aria-label={`将 ${job.company} ${job.title} 移入回收站`}>
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       )}
                     </tr>
                     {isExpanded && (
                       <tr className="border-b border-card-border bg-[#FFFCFA]">
-                        <td colSpan={onSoftDelete ? 11 : 10} className="px-6 py-4">
+                        <td colSpan={hasActions ? 11 : 10} className="px-6 py-4">
                           <div className="grid grid-cols-1 gap-4 text-sm lg:grid-cols-3">
                             <div className="rounded-2xl border border-card-border bg-white p-4">
                               <p className="mb-2 text-xs font-black text-primary">JD摘要</p>
@@ -195,7 +235,7 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
               })}
               {!jobs.length && (
                 <tr>
-                  <td colSpan={onSoftDelete ? 11 : 10} className="px-4 py-10 text-center text-sm text-muted">
+                  <td colSpan={hasActions ? 11 : 10} className="px-4 py-10 text-center text-sm text-muted">
                     {loading ? '正在读取岗位…' : '没有符合当前条件的岗位'}
                   </td>
                 </tr>

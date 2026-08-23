@@ -580,6 +580,26 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertIn("application/json", headers["Content-Type"])
         self.assertEqual([job["id"] for job in payload["pending_confirmation"]], ["ready-job"])
 
+    def test_workbench_excludes_collection_only_platforms_from_automatic_delivery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                external = _job("zhilian-ready")
+                external.update({"source_platform": "zhilian", "source_job_id": "zhilian-ready"})
+                insert_job(db, external)
+                update_job_score(db, "zhilian-ready", 90, "匹配")
+                update_job_status(db, "zhilian-ready", "ready")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            status, _, body = self._request("/api/workbench")
+
+        payload = json.loads(body)
+        self.assertTrue(status.startswith("200"), body)
+        self.assertEqual(payload["pending_confirmation"], [])
+
     def test_web_api_workbench_reports_daily_send_quota(self):
         with tempfile.TemporaryDirectory() as tmp:
             base_dir = Path(tmp)
@@ -888,6 +908,44 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertTrue(confirmation_event.is_set())
         self.assertEqual(full_task.context["confirmed_job_ids"], ["ready-job"])
         self.assertEqual(json.loads(response_body)["id"], "full-task")
+
+    def test_web_api_manual_sent_records_external_send_without_using_boss_quota(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                external = _job("51job-manual")
+                external.update({"source_platform": "51job", "source_job_id": "51job-manual"})
+                insert_job(db, external)
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            status, _, body = self._request(
+                "/api/jobs/manual-sent",
+                method="POST",
+                json_body={"job_ids": ["51job-manual"], "confirmed": True},
+            )
+            workbench_status, _, workbench_body = self._request("/api/workbench")
+            verify_db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                row = verify_db.execute(
+                    "SELECT status FROM jobs WHERE id = ?",
+                    ("51job-manual",),
+                ).fetchone()
+                history = verify_db.execute(
+                    "SELECT action FROM history WHERE job_id = ?",
+                    ("51job-manual",),
+                ).fetchall()
+            finally:
+                verify_db.close()
+
+        self.assertTrue(status.startswith("200"), body)
+        self.assertEqual(json.loads(body)["affected_count"], 1)
+        self.assertTrue(workbench_status.startswith("200"), workbench_body)
+        self.assertEqual(json.loads(workbench_body)["send_quota"]["sent"], 0)
+        self.assertEqual(row["status"], "sent")
+        self.assertEqual([item["action"] for item in history], ["manual_sent"])
 
     def test_web_api_deliver_rejects_already_sent_jobs(self):
         with tempfile.TemporaryDirectory() as tmp:
