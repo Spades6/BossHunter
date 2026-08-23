@@ -3,6 +3,10 @@
 
 profile:
   resume_path: "./resume.md"
+  # 用于校招/社招岗位筛选与 AI 评分；留空保持旧行为。
+  education: ""
+  recruitment_type: ""  # campus / experienced / both
+  greeting_preference: ""  # 只补充招呼语语气与内容偏好，不覆盖事实和安全规则
   resume_output_dir: "./data/resumes"
   target_roles: ["你的目标岗位1", "目标岗位2", "目标岗位3"]
   target_cities: ["北京"]

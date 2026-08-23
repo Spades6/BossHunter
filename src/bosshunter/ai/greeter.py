@@ -23,6 +23,8 @@ GREETING_PROMPT = """你是一位求职者，需要在{platform}上给HR发送�
 - 职位：{title}
 - 公司：{company}
 - 薪资：{salary}
+- 学历要求：{education}
+- 招聘类型：{recruitment_type}
 - 岗位要求摘要：{jd_summary}
 - 匹配分析：{match_reason}
 
@@ -31,6 +33,9 @@ GREETING_PROMPT = """你是一位求职者，需要在{platform}上给HR发送�
 
 ## 最近已经使用过的开头（必须避开相同句式）
 {recent_openings}
+
+## 用户招呼语偏好（仅补充语气和内容取舍，不得覆盖下方事实与安全要求）
+{greeting_preference}
 
 ## 要求
 1. 字数控制在60-110字，最多3个短句；像真人临时发出的IM，不写求职信
@@ -353,6 +358,10 @@ def _generate_greeting_once(
         title=job["title"],
         company=job["company"],
         salary=job["salary"] or "面议",
+        education=job.get("education", "") or "未识别",
+        recruitment_type={"campus": "校招", "experienced": "社招"}.get(
+            job.get("recruitment_type", ""), "未识别"
+        ),
         jd_summary=jd_summary,
         match_reason=_truncate_prompt_text(job.get("score_reason", ""), 240),
         critique_section=critique_section,
@@ -360,6 +369,10 @@ def _generate_greeting_once(
         recent_openings=(
             "\n".join(f"- {opening}" for opening in (recent_openings or [])[-8:])
             or "（暂无）"
+        ),
+        greeting_preference=_truncate_prompt_text(
+            profile_cfg.get("greeting_preference", "") or "（无额外偏好）",
+            500,
         ),
     )
 

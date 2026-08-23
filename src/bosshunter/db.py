@@ -48,6 +48,8 @@ def _init_tables(conn: sqlite3.Connection) -> None:
             salary TEXT,
             city TEXT,
             experience TEXT,
+            education TEXT,
+            recruitment_type TEXT DEFAULT 'unknown',
             jd TEXT,
             hr_name TEXT,
             hr_title TEXT,
@@ -88,6 +90,7 @@ def _init_tables(conn: sqlite3.Connection) -> None:
     _migrate_v1_1(conn)
     _migrate_v1_2(conn)
     _migrate_v1_3(conn)
+    _migrate_v1_4(conn)
     _init_scoring_runs(conn)
     _init_collection_runs(conn)
 
@@ -333,6 +336,12 @@ def insert_job_if_new(conn: sqlite3.Connection, job: dict[str, Any]) -> bool:
         "salary": job.get("salary", ""),
         "city": job.get("city", ""),
         "experience": job.get("experience", ""),
+        "education": job.get("education", ""),
+        "recruitment_type": (
+            job.get("recruitment_type")
+            if job.get("recruitment_type") in {"campus", "experienced"}
+            else "unknown"
+        ),
         "jd": job.get("jd", ""),
         "hr_name": job.get("hr_name", ""),
         "hr_title": job.get("hr_title", ""),
@@ -348,11 +357,11 @@ def insert_job_if_new(conn: sqlite3.Connection, job: dict[str, Any]) -> bool:
     cursor = conn.execute(
         """
         INSERT OR IGNORE INTO jobs (
-            id, title, company, salary, city, experience, jd,
+            id, title, company, salary, city, experience, education, recruitment_type, jd,
             hr_name, hr_title, hr_active, company_size, company_industry, url,
             source_platform, source_job_id, source_keyword, source_city_code
         ) VALUES (
-            :id, :title, :company, :salary, :city, :experience, :jd,
+            :id, :title, :company, :salary, :city, :experience, :education, :recruitment_type, :jd,
             :hr_name, :hr_title, :hr_active, :company_size, :company_industry, :url,
             :source_platform, :source_job_id, :source_keyword, :source_city_code
         )
@@ -508,6 +517,39 @@ def _migrate_v1_3(conn: sqlite3.Connection) -> None:
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_source_platform ON jobs(source_platform)")
+    conn.commit()
+
+
+def _migrate_v1_4(conn: sqlite3.Connection) -> None:
+    """Add education and recruitment-type fields without aggressive inference."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+    if "education" not in cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN education TEXT")
+    if "recruitment_type" not in cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN recruitment_type TEXT DEFAULT 'unknown'")
+    searchable = "COALESCE(title, '') || ' ' || COALESCE(jd, '') || ' ' || COALESCE(experience, '')"
+    conn.execute(f"""
+        UPDATE jobs SET education = CASE
+            WHEN {searchable} LIKE '%博士%' THEN '博士'
+            WHEN {searchable} LIKE '%硕士%' THEN '硕士'
+            WHEN {searchable} LIKE '%本科%' THEN '本科'
+            WHEN {searchable} LIKE '%大专%' OR {searchable} LIKE '%专科%' THEN '大专'
+            WHEN {searchable} LIKE '%学历不限%' OR {searchable} LIKE '%不限学历%' THEN '不限'
+            ELSE education
+        END
+        WHERE education IS NULL OR TRIM(education) = ''
+    """)
+    conn.execute(f"""
+        UPDATE jobs SET recruitment_type = CASE
+            WHEN {searchable} LIKE '%校招%' OR {searchable} LIKE '%校园招聘%'
+              OR {searchable} LIKE '%应届%' OR {searchable} LIKE '%毕业生%'
+              OR {searchable} LIKE '%管培生%' OR {searchable} LIKE '%实习生%' THEN 'campus'
+            WHEN {searchable} LIKE '%社招%' OR {searchable} LIKE '%社会招聘%' THEN 'experienced'
+            ELSE 'unknown'
+        END
+        WHERE recruitment_type IS NULL OR TRIM(recruitment_type) = '' OR recruitment_type = 'unknown'
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_recruitment_type ON jobs(recruitment_type)")
     conn.commit()
 
 

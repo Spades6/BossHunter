@@ -284,6 +284,37 @@ export default function ConfigPage() {
               )}
             </div>
             <div className="grid grid-cols-2 gap-4">
+              <Field label="最高学历">
+                <Select value={config.profile?.education || ''} onChange={e => updateConfig('profile.education', e.target.value)}>
+                  <option value="">未设置</option>
+                  <option value="博士">博士</option>
+                  <option value="硕士">硕士</option>
+                  <option value="本科">本科</option>
+                  <option value="大专">大专</option>
+                  <option value="其他">其他</option>
+                </Select>
+              </Field>
+              <Field label="求职招聘类型">
+                <Select value={config.profile?.recruitment_type || ''} onChange={e => updateConfig('profile.recruitment_type', e.target.value)}>
+                  <option value="">未设置</option>
+                  <option value="campus">校招</option>
+                  <option value="experienced">社招</option>
+                  <option value="both">校招、社招均可</option>
+                </Select>
+              </Field>
+            </div>
+            <Field label="招呼语偏好">
+              <textarea
+                value={config.profile?.greeting_preference || ''}
+                onChange={e => updateConfig('profile.greeting_preference', e.target.value)}
+                placeholder="例如：语气简洁；不要主动询问薪资；不要提能否出差"
+                rows={3}
+                maxLength={500}
+                className="w-full resize-y rounded-md border border-card-border bg-[#FFFCFA] px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted focus:border-primary"
+              />
+              <p className="mt-1 text-xs text-muted">仅补充语气和内容偏好，不能覆盖真实简历与安全规则。</p>
+            </Field>
+            <div className="grid grid-cols-2 gap-4">
               <Field label="最低薪资 (K)">
                 <Input type="number" value={config.profile?.salary_min || 0} onChange={e => updateConfig('profile.salary_min', Number(e.target.value))} min={0} max={200} />
               </Field>

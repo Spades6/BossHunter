@@ -56,6 +56,10 @@ JS_EXTRACT_DETAIL = """
     const tagTexts = Array.from(tagItems).map(t => t.textContent.trim());
     info.experience = tagTexts[0] || '';
     info.education = tagTexts[1] || '';
+    const pageText = document.body?.innerText || '';
+    info.recruitment_type = /校招|校园招聘|应届|毕业生|管培生|实习生/.test(pageText)
+        ? 'campus'
+        : (/社招|社会招聘/.test(pageText) ? 'experienced' : 'unknown');
     info.jd = document.querySelector('.job-sec-text')?.textContent?.trim() || '';
     const companyLinks = document.querySelectorAll('.sider-company .company-info a');
     info.company = '';
@@ -251,6 +255,7 @@ class BossCollector:
             city_code=candidate.city_code,
             experience=str(detail.get("experience") or candidate.experience).strip(),
             education=str(detail.get("education") or candidate.education).strip(),
+            recruitment_type=str(detail.get("recruitment_type") or "unknown").strip(),
             jd=str(detail.get("jd") or "").strip(),
             hr_name=str(detail.get("hr_name") or "").strip(),
             hr_title=str(detail.get("hr_title") or "").strip(),

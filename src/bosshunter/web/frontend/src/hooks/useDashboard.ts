@@ -21,6 +21,8 @@ interface Job {
   salary: string
   city: string
   experience: string
+  education?: string
+  recruitment_type?: 'campus' | 'experienced' | 'unknown' | string
   jd: string
   score: number
   score_reason: string

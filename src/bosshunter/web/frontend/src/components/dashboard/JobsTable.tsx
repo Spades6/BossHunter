@@ -111,7 +111,14 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
                           )}
                         </div>
                       </td>
-                      <td className="max-w-[220px] truncate px-4 py-3 font-bold text-foreground">{job.title}</td>
+                      <td className="max-w-[220px] px-4 py-3">
+                        <div className="truncate font-bold text-foreground">{job.title}</div>
+                        <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted">
+                          <span>{job.education || '学历未识别'}</span>
+                          <span>·</span>
+                          <span>{job.recruitment_type === 'campus' ? '校招' : job.recruitment_type === 'experienced' ? '社招' : '类型未识别'}</span>
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-muted">{job.salary || '-'}</td>
                       <td className="px-4 py-3">
                         <span className={`font-mono font-black ${getScoreColor(job.score)}`}>{job.score || '-'}</span>
