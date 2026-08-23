@@ -661,7 +661,8 @@ class ZhilianCollector:
                         search_url = self.build_search_url(request, city, keyword, 1)
                     except CollectionError as exc:
                         return PlatformCollectionResult(self.platform, "failed", exc.code, exc.message)
-                    target_id = self.browser.new_tab(search_url, background=True)
+                    initial_url = "about:blank" if self.browser.navigate_action is not None else search_url
+                    target_id = self.browser.new_tab(initial_url, background=True)
                     if not target_id:
                         return PlatformCollectionResult(self.platform, "failed", "browser_disconnected", "无法打开智联搜索页")
                     if self.browser.navigate_action is not None and not self.browser.navigate_action(target_id, search_url):
@@ -781,7 +782,8 @@ class ZhilianCollector:
                                 else:
                                     self.sleep(delay)
                             hooks.on_event(phase="loading_detail", keyword=keyword, city=city, page=page)
-                            detail_target = self.browser.new_tab(candidate.url, background=True)
+                            detail_initial_url = "about:blank" if self.browser.navigate_action is not None else candidate.url
+                            detail_target = self.browser.new_tab(detail_initial_url, background=True)
                             if not detail_target:
                                 hooks.on_parse_failed("无法打开智联详情页")
                                 continue
