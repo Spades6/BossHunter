@@ -91,7 +91,9 @@ class ZhilianFixtureTests(TestCase):
 
     def test_current_dom_selectors_cover_anchor_company_and_detail_jd(self):
         self.assertIn(".companyinfo__name", JS_EXTRACT_LIST)
+        self.assertIn("div.job-card", JS_EXTRACT_LIST)
         self.assertIn(".describtion-card__detail-content", JS_EXTRACT_DETAIL)
+        self.assertIn("descriptionCard", JS_EXTRACT_DETAIL)
         self.assertIn("describtion-card__detail-content", JD_CLASSES)
 
     def test_current_detail_markup_parses_without_list_fallback(self):
@@ -248,8 +250,71 @@ class ZhilianFixtureTests(TestCase):
 
         self.assertEqual(result.reason_code, "target_reached")
         self.assertEqual(actions, [
-            ("click", 'input[placeholder="输入职位、公司等搜索"]'),
+            (
+                "click",
+                'input[placeholder="输入职位、公司等搜索"], '
+                'input[placeholder="搜索职位、公司"], '
+                'input[placeholder*="职位、公司"]',
+            ),
             ("key", "SelectAll"),
             ("key", "Backspace"),
             ("type", "人力"),
         ])
+
+    def test_collector_reads_current_split_page_by_clicking_job_card(self):
+        search_state_calls = 0
+
+        def evaluate_current(_target, script):
+            nonlocal search_state_calls
+            if "item_count" in script:
+                search_state_calls += 1
+                if search_state_calls == 1:
+                    return json.dumps({"url": "https://www.zhaopin.com/jobs?jl=530", "input": "", "signature": "old"})
+                return json.dumps({
+                    "url": "https://www.zhaopin.com/jobs?jl=530&pageMode=search&kw=AI运营",
+                    "input": "AI运营",
+                    "signature": "new",
+                })
+            if "submitted_by" in script:
+                return json.dumps({"ok": True, "value": "AI运营", "submitted_by": "button"})
+            if "card.click()" in script:
+                return json.dumps({"ok": True})
+            if "descriptionCard" in script:
+                return json.dumps({
+                    "status": "ready",
+                    "title": "AI 产品运营",
+                    "company": "示例科技",
+                    "salary": "1-2万",
+                    "city": "北京",
+                    "jd": "负责 AI 产品运营、用户增长与数据复盘。",
+                    "url": "https://www.zhaopin.com/jobdetail/CC123J40800000001.htm",
+                })
+            return json.dumps({"status": "ready", "items": [{"card_index": 0, "company": "示例科技", "city": "北京"}]})
+
+        navigated = []
+        browser = ZhilianBrowser(
+            new_tab=lambda _url, **_kwargs: "tab-current",
+            close_tab=lambda _target: True,
+            evaluate=evaluate_current,
+            scroll=lambda *_args, **_kwargs: True,
+            wait_for_load=lambda *_args, **_kwargs: True,
+            navigate_action=lambda _target, url: navigated.append(url) or True,
+        )
+        collected = []
+        hooks = CollectorHooks(
+            stop_event=None,
+            on_list_candidate=lambda candidate: True,
+            on_candidate=lambda candidate: collected.append(candidate) or False,
+            on_parse_failed=lambda reason: self.fail(reason),
+            on_event=lambda **_kwargs: None,
+        )
+
+        result = ZhilianCollector(browser=browser, sleep=lambda _seconds: None).collect(
+            PlatformCollectionRequest("zhilian", ["AI运营"], ["北京"], {"北京": "530"}, max_pages=1),
+            hooks,
+        )
+
+        self.assertEqual(result.reason_code, "target_reached")
+        self.assertEqual(navigated, ["https://www.zhaopin.com/sou/jl530/"])
+        self.assertEqual(collected[0].storage_id, "zhilian:CC123J40800000001")
+        self.assertIn("用户增长", collected[0].jd)

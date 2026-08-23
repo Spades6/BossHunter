@@ -21,6 +21,7 @@ from bosshunter.browser import (
     click as browser_click,
     close_tab,
     evaluate,
+    navigate as browser_navigate,
     new_tab,
     press_key as browser_press_key,
     scroll,
@@ -50,6 +51,11 @@ JD_CLASSES = (
 DETAIL_PATH_PATTERN = re.compile(r"/(?:jobdetail|job|position|detail)/[^/?]+", re.IGNORECASE)
 DETAIL_DELAY_MIN_SECONDS = 8.0
 DETAIL_DELAY_MAX_SECONDS = 15.0
+ZHILIAN_SEARCH_INPUT_SELECTOR = (
+    'input[placeholder="输入职位、公司等搜索"], '
+    'input[placeholder="搜索职位、公司"], '
+    'input[placeholder*="职位、公司"]'
+)
 
 
 def load_zhilian_city_snapshot() -> dict[str, Any]:
@@ -103,7 +109,7 @@ JS_SUBMIT_SEARCH = """
   input.focus();
   input.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: __KEYWORD__}));
   input.dispatchEvent(new Event('change', {bubbles: true}));
-  const button = document.querySelector('.query-search__content-button, button[class*="query-search"]');
+  const button = document.querySelector('.query-search__content-button, .query-sug__button, button[class*="query-search"]');
   if (button) {
     button.click();
     return JSON.stringify({ok: true, value: input.value, submitted_by: 'button'});
@@ -126,7 +132,7 @@ JS_FOCUS_SEARCH_INPUT = """
 JS_CLICK_SEARCH_BUTTON = """
 (() => {
   const input = document.querySelector('input[placeholder="输入职位、公司等搜索"], input[placeholder*="职位、公司"]');
-  const button = document.querySelector('.query-search__content-button, button[class*="query-search"]');
+  const button = document.querySelector('.query-search__content-button, .query-sug__button, button[class*="query-search"]');
   if (!button) return JSON.stringify({ok: false, reason: 'search_button_missing'});
   button.click();
   return JSON.stringify({ok: true, value: input ? input.value || '' : '', submitted_by: 'button'});
@@ -137,7 +143,7 @@ JS_READ_SEARCH_STATE = """
 (() => {
   const input = document.querySelector('input[placeholder="输入职位、公司等搜索"], input[placeholder*="职位、公司"]');
   const items = Array.from(document.querySelectorAll(
-    'div.joblist-box__item, div.joblist-item, article.job-card'
+    'div.joblist-box__item, div.joblist-item, article.job-card, div.job-card'
   )).slice(0, 8);
   const signature = items.map((item) => {
     const link = item.querySelector('a[href*="/jobdetail/"], a[href*="/job/"], a[href*="/position/"], a[href*="/detail/"]');
@@ -173,14 +179,14 @@ JS_EXTRACT_LIST = """
   const searchInput = document.querySelector('input[placeholder="输入职位、公司等搜索"], input[placeholder*="职位、公司"]');
   const blockedMatch = text.match(/验证码|滑块|访问频繁|频率限制|账号异常|拒绝访问/);
   const items = Array.from(document.querySelectorAll(
-    'div.joblist-box__item, div.joblist-item, article.job-card'
-  )).map((item) => {
+    'div.joblist-box__item, div.joblist-item, article.job-card, div.job-card'
+  )).map((item, cardIndex) => {
     const first = (selectors) => selectors.map((s) => item.querySelector(s)).find(Boolean);
-    const title = first(['a.jobinfo__name', '.job-name', '.job-title']);
-    const salary = first(['p.jobinfo__salary', '.job-salary', '.salary']);
-    const company = first(['.companyinfo__name', '.company-name', '.company']);
+    const title = first(['a.jobinfo__name', '.job-card__title-text', '.job-name', '.job-title']);
+    const salary = first(['p.jobinfo__salary', '.job-card__salary', '.job-salary', '.salary']);
+    const company = first(['.companyinfo__name', '.job-card__company-name', '.company-name', '.company']);
     const info = Array.from(item.querySelectorAll('.jobinfo__other-info-item')).map((node) => node.textContent.trim()).filter(Boolean);
-    const cityNode = first(['.jobinfo__city', '.job-city', '.city']);
+    const cityNode = first(['.jobinfo__city', '.job-card__location', '.job-city', '.city']);
     const city = info.find(value => expectedCity && value.includes(expectedCity)) || (cityNode ? cityNode.textContent.trim() : '') || info[0] || expectedCity;
     const detailLink = item.querySelector('a[href*="/jobdetail/"], a[href*="/job/"], a[href*="/position/"], a[href*="/detail/"]');
     const href = [
@@ -193,6 +199,7 @@ JS_EXTRACT_LIST = """
       matchedId = detailPath.match(/\\/(?:jobdetail|job|position|detail)\\/([^/?]+?)(?:\\.html?)?$/i);
     } catch (_) {}
     return {
+      card_index: item.matches('div.job-card') ? cardIndex : null,
       source_job_id: item.getAttribute('data-positionid') || item.getAttribute('data-job-id') || item.getAttribute('data-id')
         || (title ? title.getAttribute('data-positionid') : '') || (detailLink ? detailLink.getAttribute('data-positionid') : '')
         || (matchedId ? matchedId[1] : ''),
@@ -203,7 +210,7 @@ JS_EXTRACT_LIST = """
       url: href
     };
   });
-  const hasListRegion = Boolean(document.querySelector('.positionlist__list, [class*="positionlist"]'));
+  const hasListRegion = Boolean(document.querySelector('.positionlist__list, [class*="positionlist"], .job-list-panel'));
   const strongLoginWallText = /登录查看更多|登录查看全部|立即登录/.test(text);
   const loginWallText = /请先登录|请登录|登录后(?:查看|继续|获取)|登录失效|账号登录|扫码登录/.test(text);
   const loginDialog = Boolean(document.querySelector('[role="dialog"], .login-dialog, [class*="login-modal"], [class*="login-dialog"]'));
@@ -220,19 +227,33 @@ JS_EXTRACT_DETAIL = """
   const loginRequired = /请先登录|请登录|登录后(?:查看|继续|获取)|登录失效|登录查看更多|登录查看全部|立即登录/.test(pageText);
   const expectedCity = "__EXPECTED_CITY__";
   const first = (selectors) => selectors.map((s) => document.querySelector(s)).find(Boolean);
-  const jd = first(['.describtion-card__detail-content', '.describtion__detail-content', '.job-detail', '.jobdetail', '.job-intro', '.job-description']);
-  const title = first(['.summary-planes__title', 'h1.jobinfo__name', '.job-name', '.job-title', 'h1']);
-  const salary = first(['.summary-planes__salary', 'p.jobinfo__salary', '.job-salary', '.salary']);
-  const company = first(['.company-info__name', 'div.companyinfo__name', '.company-name', '.company']);
-  const cityNode = first(['.address-info__content', '.summary-planes__info', '.jobinfo__city', '.job-city', '.city']);
+  const descriptionCard = Array.from(document.querySelectorAll('.job-detail-card')).find((card) =>
+    /职位描述/.test(card.querySelector('.job-detail-card__title')?.textContent || '')
+  );
+  const jd = (descriptionCard ? descriptionCard.querySelector('.job-detail-card__body') : null)
+    || first(['.describtion-card__detail-content', '.describtion__detail-content', '.job-detail', '.jobdetail', '.job-intro', '.job-description']);
+  const title = first(['.job-detail-summary__title-text', '.summary-planes__title', 'h1.jobinfo__name', '.job-name', '.job-title', 'h1']);
+  const salary = first(['.job-detail-summary__salary', '.summary-planes__salary', 'p.jobinfo__salary', '.job-salary', '.salary']);
+  const company = first(['.job-card--active .job-card__company-name', '.job-detail-summary__company-name', '.company-info__name', 'div.companyinfo__name', '.company-name', '.company']);
+  const cityNode = first(['.job-detail-summary__tag', '.address-info__content', '.summary-planes__info', '.jobinfo__city', '.job-city', '.city']);
+  const detailLink = first(['a.job-company-info__view-all', 'a[href*="/jobdetail/"]']);
   const cityText = cityNode ? cityNode.textContent.trim() : '';
   const city = expectedCity && cityText.includes(expectedCity) ? expectedCity : cityText;
   return JSON.stringify({
     status: blockedMatch ? 'blocked' : loginRequired ? 'login_required' : jd ? 'ready' : 'selector_changed',
     title: title ? title.textContent.trim() : '', salary: salary ? salary.textContent.trim() : '',
     company: company ? company.textContent.trim() : '', city,
-    jd: jd ? jd.textContent.trim() : '', url: window.location.href
+    jd: jd ? jd.textContent.trim() : '', url: detailLink ? detailLink.href : window.location.href
   });
+})()
+"""
+
+JS_CLICK_JOB_CARD = """
+(() => {
+  const card = document.querySelectorAll('div.job-card')[__CARD_INDEX__];
+  if (!card) return JSON.stringify({ok: false, reason: 'job_card_missing'});
+  card.click();
+  return JSON.stringify({ok: true});
 })()
 """
 
@@ -255,6 +276,10 @@ def _build_list_script(city: str) -> str:
 
 def _build_detail_script(city: str) -> str:
     return JS_EXTRACT_DETAIL.replace('"__EXPECTED_CITY__"', _js_literal(city))
+
+
+def _build_click_card_script(card_index: int) -> str:
+    return JS_CLICK_JOB_CARD.replace("__CARD_INDEX__", str(int(card_index)))
 
 
 @dataclass
@@ -483,6 +508,7 @@ class ZhilianBrowser:
     click_action: Callable[..., bool] | None = None
     type_text_action: Callable[..., bool] | None = None
     press_key_action: Callable[..., bool] | None = None
+    navigate_action: Callable[[str, str], bool] | None = None
 
 
 class ZhilianCollector:
@@ -506,6 +532,7 @@ class ZhilianCollector:
                 click_action=browser_click,
                 type_text_action=browser_type_text,
                 press_key_action=browser_press_key,
+                navigate_action=browser_navigate,
             )
 
     def _submit_keyword(self, target_id: str, keyword: str) -> None:
@@ -522,7 +549,7 @@ class ZhilianCollector:
             focused = self._parse_payload(self.browser.evaluate(target_id, JS_FOCUS_SEARCH_INPUT))
             if focused.get("ok") is False:
                 raise CollectionError("selector_changed", "智联搜索框选择器未命中，可能是页面结构变化")
-            if not self.browser.click_action(target_id, 'input[placeholder="输入职位、公司等搜索"]'):
+            if not self.browser.click_action(target_id, ZHILIAN_SEARCH_INPUT_SELECTOR):
                 raise CollectionError("selector_changed", "智联搜索框选择器未命中，可能是页面结构变化")
             # The city landing page normally starts with an empty search box.
             # Clear it first when the platform restores a previous query.
@@ -603,7 +630,8 @@ class ZhilianCollector:
                 return
             url = str(last_state.get("url") or "")
             value = str(last_state.get("input") or "")
-            keyword_route = bool(re.search(r"/kw[^/]+(?:/|$)", url, re.IGNORECASE))
+            query_keyword = (parse_qs(urlparse(url).query).get("kw") or [""])[0]
+            keyword_route = bool(re.search(r"/kw[^/]+(?:/|$)", url, re.IGNORECASE)) or query_keyword == keyword
             refreshed = str(last_state.get("signature") or "") != old_signature
             if value == keyword and keyword_route and refreshed:
                 return
@@ -636,6 +664,8 @@ class ZhilianCollector:
                     target_id = self.browser.new_tab(search_url, background=True)
                     if not target_id:
                         return PlatformCollectionResult(self.platform, "failed", "browser_disconnected", "无法打开智联搜索页")
+                    if self.browser.navigate_action is not None and not self.browser.navigate_action(target_id, search_url):
+                        return PlatformCollectionResult(self.platform, "failed", "browser_disconnected", "智联搜索页导航失败")
                     for page in range(1, request.max_pages + 1):
                         if hooks.stop_event is not None and hooks.stop_event.is_set():
                             return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
@@ -681,6 +711,58 @@ class ZhilianCollector:
                         if not items:
                             return PlatformCollectionResult(self.platform, "completed", "no_results", "智联没有更多搜索结果")
                         for raw_item in items:
+                            card_index = raw_item.get("card_index") if isinstance(raw_item, dict) else None
+                            if card_index is not None:
+                                if detail_requests:
+                                    delay = max(0.0, self.uniform(*self.delay_range))
+                                    hooks.on_event(
+                                        phase="pacing", keyword=keyword, city=city, page=page,
+                                        message=f"详情页安全间隔 {delay:.1f} 秒",
+                                    )
+                                    if hooks.stop_event is not None:
+                                        if hooks.stop_event.wait(delay):
+                                            return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
+                                    else:
+                                        self.sleep(delay)
+                                hooks.on_event(phase="loading_detail", keyword=keyword, city=city, page=page)
+                                clicked = self._parse_payload(
+                                    self.browser.evaluate(target_id, _build_click_card_script(int(card_index)))
+                                )
+                                if clicked.get("ok") is not True:
+                                    return PlatformCollectionResult(
+                                        self.platform, "blocked", "selector_changed", "智联职位卡结构变化，已安全停止"
+                                    )
+                                detail_requests += 1
+                                if hooks.stop_event is not None:
+                                    if hooks.stop_event.wait(1.5):
+                                        return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
+                                else:
+                                    self.sleep(1.5)
+                                raw_detail = self.browser.evaluate(target_id, _build_detail_script(city))
+                                try:
+                                    detail = json.loads(raw_detail) if isinstance(raw_detail, str) else raw_detail
+                                    if not isinstance(detail, dict):
+                                        raise CollectionError("parse_failed", "智联侧栏详情返回格式无效")
+                                    if detail.get("status") == "blocked":
+                                        return PlatformCollectionResult(self.platform, "blocked", "rate_limit", "智联页面出现验证或限流，已停止整个采集队列")
+                                    if detail.get("status") == "login_required":
+                                        return PlatformCollectionResult(self.platform, "blocked", "login_required", "智联页面要求重新登录，已停止整个采集队列")
+                                    if detail.get("status") == "selector_changed":
+                                        return PlatformCollectionResult(self.platform, "blocked", "selector_changed", "智联侧栏详情结构变化，已安全停止")
+                                    base = self._candidate_from_list(detail, city, keyword)
+                                    if base is None:
+                                        raise CollectionError("parse_failed", "智联侧栏详情缺少岗位身份、职位或链接")
+                                    if not hooks.on_list_candidate(base):
+                                        continue
+                                    final = self._candidate_from_detail(detail, base)
+                                    if not final.title or not final.company or not final.url or not final.jd:
+                                        raise CollectionError("parse_failed", "智联侧栏详情缺少职位、公司、链接或 JD")
+                                except (CollectionError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                                    hooks.on_parse_failed(str(exc) or "智联侧栏详情解析失败")
+                                    continue
+                                if not hooks.on_candidate(final):
+                                    return PlatformCollectionResult(self.platform, "completed", "target_reached", "已达到目标新增数量")
+                                continue
                             candidate = self._candidate_from_list(raw_item, city, keyword)
                             if candidate is None or not hooks.on_list_candidate(candidate):
                                 continue
@@ -702,6 +784,10 @@ class ZhilianCollector:
                             detail_target = self.browser.new_tab(candidate.url, background=True)
                             if not detail_target:
                                 hooks.on_parse_failed("无法打开智联详情页")
+                                continue
+                            if self.browser.navigate_action is not None and not self.browser.navigate_action(detail_target, candidate.url):
+                                self.browser.close_tab(detail_target)
+                                hooks.on_parse_failed("智联详情页导航失败")
                                 continue
                             detail_requests += 1
                             try:

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import quote
 
-from bosshunter.browser import close_tab, evaluate, new_tab, scroll, wait_for_load
+from bosshunter.browser import close_tab, evaluate, navigate as browser_navigate, new_tab, scroll, wait_for_load
 from bosshunter.collection.base import CollectionError, CollectorHooks
 from bosshunter.collection.models import JobCandidate, PlatformCollectionRequest, PlatformCollectionResult
 
@@ -136,6 +136,7 @@ class Job51Browser:
     evaluate: Callable[..., Any] = evaluate
     scroll: Callable[..., bool] = scroll
     wait_for_load: Callable[..., bool] = wait_for_load
+    navigate_action: Callable[[str, str], bool] | None = None
 
 
 def _payload(raw: Any) -> dict[str, Any]:
@@ -159,7 +160,7 @@ class Job51Collector:
         detail_delay_range: tuple[float, float] = (DETAIL_DELAY_MIN_SECONDS, DETAIL_DELAY_MAX_SECONDS),
         page_delay_range: tuple[float, float] = (PAGE_DELAY_MIN_SECONDS, PAGE_DELAY_MAX_SECONDS),
     ):
-        self.browser = browser or Job51Browser()
+        self.browser = browser or Job51Browser(navigate_action=browser_navigate)
         self.sleep = sleep
         self.uniform = uniform
         self.detail_delay_range = detail_delay_range
@@ -184,9 +185,12 @@ class Job51Collector:
             if not request.city_codes.get(city):
                 return PlatformCollectionResult(self.platform, "failed", "no_valid_city", f"51job 城市编码未配置：{city}")
             for keyword in request.keywords:
-                target_id = self.browser.new_tab(self.build_search_url(request, city, keyword), background=True)
+                search_url = self.build_search_url(request, city, keyword)
+                target_id = self.browser.new_tab(search_url, background=True)
                 if not target_id:
                     return PlatformCollectionResult(self.platform, "failed", "browser_disconnected", "无法打开 51job 搜索页")
+                if self.browser.navigate_action is not None and not self.browser.navigate_action(target_id, search_url):
+                    return PlatformCollectionResult(self.platform, "failed", "browser_disconnected", "51job 搜索页导航失败")
                 try:
                     for page in range(1, request.max_pages + 1):
                         if hooks.stop_event is not None and hooks.stop_event.is_set():
@@ -223,6 +227,10 @@ class Job51Collector:
                             detail_target = self.browser.new_tab(candidate.url, background=True)
                             if not detail_target:
                                 hooks.on_parse_failed("无法打开 51job 详情页")
+                                continue
+                            if self.browser.navigate_action is not None and not self.browser.navigate_action(detail_target, candidate.url):
+                                self.browser.close_tab(detail_target)
+                                hooks.on_parse_failed("51job 详情页导航失败")
                                 continue
                             detail_requests += 1
                             try:
