@@ -4,11 +4,15 @@ from unittest import TestCase
 from bosshunter.collection.base import CollectorHooks
 from bosshunter.collection.models import PlatformCollectionRequest
 from bosshunter.collection.orchestrator import normalize_collection_options
-from bosshunter.collection.platforms.job51 import Job51Browser, Job51Collector, get_51job_city_code
+from bosshunter.collection.platforms.job51 import JS_EXTRACT_DETAIL, Job51Browser, Job51Collector, get_51job_city_code
 from bosshunter.collection.text import clean_job_description
 
 
 class Job51CollectorTests(TestCase):
+    def test_detail_script_targets_job_description_without_footer_noise(self):
+        self.assertIn(".bmsg.job_msg.inbox > div:first-child", JS_EXTRACT_DETAIL)
+        self.assertNotIn("body.slice(anchor)", JS_EXTRACT_DETAIL)
+
     def test_city_and_option_defaults_are_fail_closed(self):
         self.assertEqual(get_51job_city_code("上海市"), "020000")
         self.assertIsNone(get_51job_city_code("北京"))
@@ -100,6 +104,52 @@ class Job51CollectorTests(TestCase):
         )
         self.assertEqual(result.status, "blocked")
         self.assertEqual(result.reason_code, "rate_limit")
+
+    def test_collection_waits_for_spa_list_render(self):
+        evaluations = 0
+        sleeps = []
+
+        def evaluate(_target, script):
+            nonlocal evaluations
+            if ".joblist-item" in script:
+                evaluations += 1
+                if evaluations < 3:
+                    return json.dumps({"status": "waiting", "jobs": []})
+                return json.dumps({"status": "ready", "jobs": [{
+                    "source_job_id": "job-spa",
+                    "title": "AI 运营",
+                    "company": "示例公司",
+                    "city": "上海",
+                    "url": "https://jobs.51job.com/shanghai/job-spa.html",
+                }]})
+            return json.dumps({
+                "status": "ready", "title": "AI 运营", "company": "示例公司",
+                "city": "上海", "jd": "负责 AI 产品运营与数据分析。",
+            })
+
+        browser = Job51Browser(
+            new_tab=lambda url, **_kwargs: url,
+            close_tab=lambda _target: True,
+            evaluate=evaluate,
+            scroll=lambda *_args, **_kwargs: True,
+            wait_for_load=lambda *_args, **_kwargs: True,
+        )
+        hooks = CollectorHooks(
+            stop_event=None,
+            on_list_candidate=lambda _candidate: True,
+            on_candidate=lambda _candidate: False,
+            on_parse_failed=lambda reason: self.fail(reason),
+            on_event=lambda **_kwargs: None,
+        )
+
+        result = Job51Collector(browser=browser, sleep=sleeps.append).collect(
+            PlatformCollectionRequest("51job", ["AI运营"], ["上海"], {"上海": "020000"}, max_pages=1),
+            hooks,
+        )
+
+        self.assertEqual(result.reason_code, "target_reached")
+        self.assertEqual(evaluations, 3)
+        self.assertEqual(sleeps, [0.75, 0.75])
 
 
 class JobDescriptionCleanupTests(TestCase):

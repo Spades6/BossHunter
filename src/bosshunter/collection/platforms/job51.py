@@ -25,6 +25,8 @@ DETAIL_DELAY_MIN_SECONDS = 12.0
 DETAIL_DELAY_MAX_SECONDS = 20.0
 PAGE_DELAY_MIN_SECONDS = 30.0
 PAGE_DELAY_MAX_SECONDS = 45.0
+RENDER_POLL_INTERVAL_SECONDS = 0.75
+RENDER_POLL_ATTEMPTS = 10
 
 # Only codes verified by the contributed implementation are bundled. Unknown
 # cities are rejected instead of guessing or reusing another platform's code.
@@ -100,12 +102,12 @@ JS_EXTRACT_DETAIL = r"""
     if (/当前职位审核中或已下线|职位已下线/.test(pageText)) {
         return JSON.stringify({status: 'offline'});
     }
-    var anchor = body.indexOf('职位描述');
-    var jd = anchor >= 0 ? body.slice(anchor).replace(/\s+/g, ' ').trim() : '';
-    var titleNode = document.querySelector('h1, [class*="job-name"]');
-    var salaryNode = document.querySelector('[class*="salary"]');
+    var jdNode = document.querySelector('.bmsg.job_msg.inbox > div:first-child, .bmsg.job_msg.inbox');
+    var jd = jdNode ? String(jdNode.innerText || '').replace(/\s+/g, ' ').trim() : '';
+    var titleNode = document.querySelector('.jTitle h1, h1[title], [class*="job-name"]');
+    var salaryNode = document.querySelector('.jTitle strong, [class*="salary"]');
     var companyNode = document.querySelector('[class*="company"] a, [class*="cname"] a, .comp');
-    var areaNode = document.querySelector('[class*="area"], [class*="location"]');
+    var areaNode = document.querySelector('.msg.ltype .type_2, [class*="area"], [class*="location"]');
     return JSON.stringify({
         status: jd ? 'ready' : 'selector_changed',
         title: titleNode ? String(titleNode.innerText || '').replace(/^招聘/, '').trim() : '',
@@ -205,8 +207,15 @@ class Job51Collector:
                         hooks.on_event(phase="loading_list", keyword=keyword, city=city, page=page)
                         self.browser.wait_for_load(target_id, timeout=15)
                         self.browser.scroll(target_id, y=2200)
-                        payload = _payload(self.browser.evaluate(target_id, JS_EXTRACT_LIST))
-                        status = str(payload.get("status") or "selector_changed")
+                        payload: dict[str, Any] = {}
+                        status = "waiting"
+                        for attempt in range(RENDER_POLL_ATTEMPTS):
+                            payload = _payload(self.browser.evaluate(target_id, JS_EXTRACT_LIST))
+                            status = str(payload.get("status") or "selector_changed")
+                            if status != "waiting":
+                                break
+                            if attempt + 1 < RENDER_POLL_ATTEMPTS and self._wait(hooks, RENDER_POLL_INTERVAL_SECONDS):
+                                return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
                         if status in {"blocked", "throttled"}:
                             return PlatformCollectionResult(self.platform, "blocked", "rate_limit", "51job 出现验证或限流信号，已停止整个平台任务")
                         if status == "waiting":
@@ -235,10 +244,17 @@ class Job51Collector:
                             detail_requests += 1
                             try:
                                 self.browser.wait_for_load(detail_target, timeout=15)
-                                detail = _payload(self.browser.evaluate(detail_target, JS_EXTRACT_DETAIL))
+                                detail: dict[str, Any] = {}
+                                detail_status = "selector_changed"
+                                for attempt in range(RENDER_POLL_ATTEMPTS):
+                                    detail = _payload(self.browser.evaluate(detail_target, JS_EXTRACT_DETAIL))
+                                    detail_status = str(detail.get("status") or "selector_changed")
+                                    if detail_status in {"ready", "blocked", "offline"}:
+                                        break
+                                    if attempt + 1 < RENDER_POLL_ATTEMPTS and self._wait(hooks, RENDER_POLL_INTERVAL_SECONDS):
+                                        return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
                             finally:
                                 self.browser.close_tab(detail_target)
-                            detail_status = str(detail.get("status") or "selector_changed")
                             if detail_status == "blocked":
                                 return PlatformCollectionResult(self.platform, "blocked", "rate_limit", "51job 详情页出现验证或限流，已停止整个平台任务")
                             if detail_status == "offline":
