@@ -702,6 +702,16 @@ def _execute_deliver_batch(task: WorkbenchTask, config: dict) -> None:
 		deferred_count,
 	)
 	paused_count = max(deferred_count - quota_deferred_count, 0)
+	task.metrics.update({
+		"send_requested": int(report.get("requested_count", len(selected_job_ids)) or 0),
+		"send_success": int(report.get("sent_count", sent_count) or 0),
+		"send_failed": failed_count,
+		"send_deferred": deferred_count,
+		"send_quota_deferred": quota_deferred_count,
+		"send_already_today": int(report.get("already_sent", 0) or 0),
+		"send_daily_limit": int(report.get("daily_limit", 0) or 0),
+		"send_remaining_quota": int(report.get("remaining_quota", 0) or 0),
+	})
 	total_count = len(selected_job_ids) or sent_count + failed_count + deferred_count
 	_log(
 		task,
@@ -715,6 +725,8 @@ def _execute_deliver_batch(task: WorkbenchTask, config: dict) -> None:
 		_log(task, f"{paused_count} 个岗位本轮未执行，已保留在“待发送招呼语”")
 
 	stop_reason = report.get("stop_reason")
+	if stop_reason:
+		task.stop_reason = str(stop_reason)
 	if stop_reason in {"captcha", "rate_limit", "blocked", "consecutive_errors"}:
 		reason_labels = {
 			"captcha": "验证码",
@@ -840,6 +852,12 @@ def api_job_search():
 		education_filter = (request.query.getunicode("education") or "").strip()
 		if education_filter and education_filter not in {"博士", "硕士", "本科", "大专", "不限", "其他", "unknown"}:
 			raise ValueError("education 参数无效")
+		sort_by = request.params.get("sort_by", "created_at").strip()
+		if sort_by not in {"salary", "education", "score", "status", "hr_active", "created_at"}:
+			raise ValueError("sort_by 参数无效")
+		sort_order = request.params.get("sort_order", "desc").strip().lower()
+		if sort_order not in {"asc", "desc"}:
+			raise ValueError("sort_order 参数无效")
 	except ValueError as exc:
 		return _json_response({"error": str(exc)}, 400)
 
@@ -881,7 +899,15 @@ def api_job_search():
 		conditions.append("created_at >= datetime('now', '-7 days')")
 	if conditions:
 		query += " WHERE " + " AND ".join(conditions)
-	query += " ORDER BY created_at DESC, score DESC"
+	sort_expressions = {
+		"salary": "CAST(REPLACE(substr(COALESCE(salary, ''), 1, CASE WHEN instr(salary, 'K') > 0 THEN instr(salary, 'K') - 1 ELSE length(salary) END), ',', '') AS REAL)",
+		"education": "CASE TRIM(COALESCE(education, '')) WHEN '博士' THEN 5 WHEN '硕士' THEN 4 WHEN '本科' THEN 3 WHEN '大专' THEN 2 WHEN '不限' THEN 1 ELSE 0 END",
+		"score": "COALESCE(score, 0)",
+		"status": "COALESCE(status, '')",
+		"hr_active": "COALESCE(hr_active, '')",
+		"created_at": "COALESCE(created_at, '')",
+	}
+	query += f" ORDER BY {sort_expressions[sort_by]} {sort_order.upper()}, created_at DESC, score DESC"
 
 	db = _get_web_db()
 	try:
@@ -959,7 +985,13 @@ def api_history_unresolved_replies_count():
 def api_workbench():
 	db = _get_web_db()
 	try:
-		threshold = load_config(CONFIG_PATH).get("scoring", {}).get("threshold", 60)
+		config = load_config(CONFIG_PATH)
+		threshold = config.get("scoring", {}).get("threshold", 60)
+		daily_limit = int(config.get("throttle", {}).get("daily_limit", 30) or 30)
+		today_sent_row = db.execute(
+			"SELECT COUNT(*) AS cnt FROM history WHERE action='sent' AND date(created_at)=date('now')"
+		).fetchone()
+		today_sent = int(today_sent_row["cnt"] if today_sent_row else 0)
 		status = task_runner.status()
 		return _json_response({
 			"funnel": get_funnel_stats(db),
@@ -971,6 +1003,12 @@ def api_workbench():
 			"pending_greetings": get_jobs_ready_to_send(db),
 			"send_errors": get_jobs_with_send_errors(db),
 			"needs_resume": get_jobs_needing_resume(db),
+			"send_quota": {
+				"daily_limit": daily_limit,
+				"sent": today_sent,
+				"remaining": max(daily_limit - today_sent, 0),
+				"exhausted": today_sent >= daily_limit,
+			},
 			"task": status["active"],
 			"last_task": status["last_task"],
 		})

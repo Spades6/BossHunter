@@ -1,9 +1,10 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
 import { getStatusLabel } from '@/lib/status'
 import type { Job } from '@/hooks/useDashboard'
+import type { JobSortKey, JobSortOrder } from '@/hooks/useJobSearch'
 
 interface JobsTableProps {
   jobs: Job[]
@@ -15,6 +16,9 @@ interface JobsTableProps {
   onToggleSelected: (id: string) => void
   onSoftDelete?: (job: Job) => void
   loading?: boolean
+  sortBy: JobSortKey
+  sortOrder: JobSortOrder
+  onSortChange: (sortBy: JobSortKey) => void
 }
 
 function statusVariant(status: string) {
@@ -36,9 +40,23 @@ function statusVariant(status: string) {
   return variants.has(status) ? status : 'default'
 }
 
-export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedIds, onToggleSelected, onSoftDelete, loading = false }: JobsTableProps) {
+export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedIds, onToggleSelected, onSoftDelete, loading = false, sortBy, sortOrder, onSortChange }: JobsTableProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [pageInput, setPageInput] = useState(String(page + 1))
   const totalPages = Math.ceil(total / pageSize)
+
+  useEffect(() => {
+    setPageInput(String(page + 1))
+  }, [page])
+
+  const jumpToPage = () => {
+    const requested = Number.parseInt(pageInput, 10)
+    if (!Number.isFinite(requested) || totalPages < 1) {
+      setPageInput(String(page + 1))
+      return
+    }
+    onPageChange(Math.min(totalPages - 1, Math.max(0, requested - 1)))
+  }
 
   const getScoreColor = (score: number) => {
     if (score >= 80) return 'text-success'
@@ -60,6 +78,17 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
     return `${Math.floor(hours / 24)}d 前`
   }
 
+  const sortableHeader = (label: string, key: JobSortKey) => (
+    <button
+      type="button"
+      onClick={() => onSortChange(key)}
+      className="inline-flex items-center gap-1 font-bold hover:text-primary"
+      title={`按${label}排序`}
+    >
+      {label}<span className="text-[10px]">{sortBy === key ? (sortOrder === 'asc' ? '↑' : '↓') : '↕'}</span>
+    </button>
+  )
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
@@ -74,11 +103,13 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
                 <th className="w-10 px-3 py-3 text-center font-bold">选</th>
                 <th className="px-4 py-3 text-left font-bold">公司</th>
                 <th className="px-4 py-3 text-left font-bold">职位</th>
-                <th className="px-4 py-3 text-left font-bold">薪资</th>
-                <th className="px-4 py-3 text-left font-bold">评分</th>
-                <th className="px-4 py-3 text-left font-bold">状态</th>
-                <th className="px-4 py-3 text-left font-bold">招聘者活跃</th>
-                <th className="px-4 py-3 text-left font-bold">时间</th>
+                <th className="px-4 py-3 text-left font-bold">城市</th>
+                <th className="px-4 py-3 text-left">{sortableHeader('薪资', 'salary')}</th>
+                <th className="px-4 py-3 text-left">{sortableHeader('学历 / 招聘类型', 'education')}</th>
+                <th className="px-4 py-3 text-left">{sortableHeader('评分', 'score')}</th>
+                <th className="px-4 py-3 text-left">{sortableHeader('状态', 'status')}</th>
+                <th className="px-4 py-3 text-left">{sortableHeader('招聘者活跃', 'hr_active')}</th>
+                <th className="px-4 py-3 text-left">{sortableHeader('时间', 'created_at')}</th>
                 {onSoftDelete && <th className="w-16 px-3 py-3 text-center font-bold">操作</th>}
               </tr>
             </thead>
@@ -111,15 +142,13 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
                           )}
                         </div>
                       </td>
-                      <td className="max-w-[220px] px-4 py-3">
-                        <div className="truncate font-bold text-foreground">{job.title}</div>
-                        <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted">
-                          <span>{job.education || '学历未识别'}</span>
-                          <span>·</span>
-                          <span>{job.recruitment_type === 'campus' ? '校招' : job.recruitment_type === 'experienced' ? '社招' : '类型未识别'}</span>
-                        </div>
-                      </td>
+                      <td className="max-w-[220px] truncate px-4 py-3 font-bold text-foreground">{job.title}</td>
+                      <td className="px-4 py-3 text-muted">{job.city || '未识别'}</td>
                       <td className="px-4 py-3 text-muted">{job.salary || '-'}</td>
+                      <td className="px-4 py-3 text-xs">
+                        <div className="font-bold text-foreground">{job.education || '学历未识别'}</div>
+                        <div className="mt-1 text-muted">{job.recruitment_type === 'campus' ? '校招' : job.recruitment_type === 'experienced' ? '社招' : '类型未识别'}</div>
+                      </td>
                       <td className="px-4 py-3">
                         <span className={`font-mono font-black ${getScoreColor(job.score)}`}>{job.score || '-'}</span>
                       </td>
@@ -143,7 +172,7 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
                     </tr>
                     {isExpanded && (
                       <tr className="border-b border-card-border bg-[#FFFCFA]">
-                        <td colSpan={onSoftDelete ? 9 : 8} className="px-6 py-4">
+                        <td colSpan={onSoftDelete ? 11 : 10} className="px-6 py-4">
                           <div className="grid grid-cols-1 gap-4 text-sm lg:grid-cols-3">
                             <div className="rounded-2xl border border-card-border bg-white p-4">
                               <p className="mb-2 text-xs font-black text-primary">JD摘要</p>
@@ -166,7 +195,7 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
               })}
               {!jobs.length && (
                 <tr>
-                  <td colSpan={onSoftDelete ? 9 : 8} className="px-4 py-10 text-center text-sm text-muted">
+                  <td colSpan={onSoftDelete ? 11 : 10} className="px-4 py-10 text-center text-sm text-muted">
                     {loading ? '正在读取岗位…' : '没有符合当前条件的岗位'}
                   </td>
                 </tr>
@@ -175,22 +204,50 @@ export function JobsTable({ jobs, page, pageSize, total, onPageChange, selectedI
           </table>
         </div>
 
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-card-border px-4 py-3">
+        {totalPages > 0 && (
+          <div className="flex flex-wrap items-center justify-center gap-3 border-t border-card-border px-4 py-3 text-xs">
+            <button
+              onClick={() => onPageChange(0)}
+              disabled={page === 0}
+              className="font-bold text-muted transition hover:text-foreground disabled:opacity-30"
+            >
+              首页
+            </button>
             <button
               onClick={() => onPageChange(Math.max(0, page - 1))}
               disabled={page === 0}
-              className="text-xs font-bold text-muted transition hover:text-foreground disabled:opacity-30"
+              className="font-bold text-muted transition hover:text-foreground disabled:opacity-30"
             >
               上一页
             </button>
-            <span className="text-xs text-muted">{page + 1} / {totalPages}</span>
+            <label className="flex items-center gap-1 text-muted">
+              第
+              <input
+                type="number"
+                min={1}
+                max={Math.max(1, totalPages)}
+                value={pageInput}
+                onChange={event => setPageInput(event.target.value)}
+                onKeyDown={event => { if (event.key === 'Enter') jumpToPage() }}
+                onBlur={jumpToPage}
+                aria-label="跳转页码"
+                className="w-14 rounded-md border border-card-border bg-[#FFFCFA] px-2 py-1 text-center text-foreground outline-none focus:border-primary"
+              />
+              页 / {totalPages} 页
+            </label>
             <button
               onClick={() => onPageChange(Math.min(totalPages - 1, page + 1))}
               disabled={page >= totalPages - 1}
-              className="text-xs font-bold text-muted transition hover:text-foreground disabled:opacity-30"
+              className="font-bold text-muted transition hover:text-foreground disabled:opacity-30"
             >
               下一页
+            </button>
+            <button
+              onClick={() => onPageChange(totalPages - 1)}
+              disabled={page >= totalPages - 1}
+              className="font-bold text-muted transition hover:text-foreground disabled:opacity-30"
+            >
+              尾页
             </button>
           </div>
         )}

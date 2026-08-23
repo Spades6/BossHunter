@@ -416,6 +416,33 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertEqual(payload["total"], 3)
         self.assertEqual([job["id"] for job in payload["items"]], ["middle", "low"])
 
+    def test_job_search_supports_whitelisted_column_sorting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                for job_id, score, education in (("low", 60, "本科"), ("high", 90, "博士")):
+                    job = _job(job_id)
+                    job["education"] = education
+                    insert_job(db, job)
+                    update_job_score(db, job_id, score, "评分")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            status, _, body = self._request("/api/jobs/search?sort_by=score&sort_order=asc")
+            invalid_sort_status, _, invalid_sort_body = self._request(
+                "/api/jobs/search?sort_by=score%20DESC&sort_order=asc"
+            )
+            invalid_order_status, _, invalid_order_body = self._request(
+                "/api/jobs/search?sort_by=score&sort_order=sideways"
+            )
+
+        self.assertTrue(status.startswith("200"), body)
+        self.assertEqual([job["id"] for job in json.loads(body)["items"]], ["low", "high"])
+        self.assertTrue(invalid_sort_status.startswith("400"), invalid_sort_body)
+        self.assertTrue(invalid_order_status.startswith("400"), invalid_order_body)
+
     def test_job_search_decodes_chinese_keyword_as_utf8(self):
         with tempfile.TemporaryDirectory() as tmp:
             base_dir = Path(tmp)
@@ -552,6 +579,28 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertTrue(status.startswith("200"))
         self.assertIn("application/json", headers["Content-Type"])
         self.assertEqual([job["id"] for job in payload["pending_confirmation"]], ["ready-job"])
+
+    def test_web_api_workbench_reports_daily_send_quota(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("sent-today"))
+                add_history(db, "sent-today", "sent", "已发送")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            status, _, body = self._request("/api/workbench")
+
+        payload = json.loads(body)
+        self.assertTrue(status.startswith("200"), body)
+        self.assertEqual(payload["send_quota"], {
+            "daily_limit": 30,
+            "sent": 1,
+            "remaining": 29,
+            "exhausted": False,
+        })
 
     def test_web_api_workbench_shows_approved_job_when_greeting_was_interrupted(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1288,6 +1337,9 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertIn("招呼语发送结果：成功 1，失败 1，待下次发送 1（共 3）", task.logs)
         self.assertIn("1 个岗位发送失败已单独记录，继续后续流程", task.logs)
         self.assertIn("1 个岗位因今日发送额度未执行，已保留在“待发送招呼语”", task.logs)
+        self.assertEqual(task.stop_reason, "daily_limit")
+        self.assertEqual(task.metrics["send_success"], 1)
+        self.assertEqual(task.metrics["send_deferred"], 1)
 
     def test_deliver_still_stops_on_account_risk_signal(self):
         # Arrange

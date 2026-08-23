@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useDashboard, type CollectionProgress, type HistoryItem, type Job, type WorkbenchTask } from '@/hooks/useDashboard'
-import { useJobSearch } from '@/hooks/useJobSearch'
+import { useJobSearch, type JobSortKey, type JobSortOrder } from '@/hooks/useJobSearch'
 import { Button } from '@/components/ui/button'
 import { JobsTable } from '@/components/dashboard/JobsTable'
 import { RecycleBinPanel } from '@/components/dashboard/RecycleBinPanel'
@@ -49,6 +49,9 @@ const TASK_STAGE_LABELS = [
 function currentTaskStage(logs: string[] = []) {
   for (const log of logs.slice().reverse()) {
     if (log.includes('AI 评分进度')) return log
+    if (log.includes('招呼语发送结果')) return log
+    if (log.includes('发送招呼语')) return '发送招呼语'
+    if (log.includes('生成招呼语')) return '生成招呼语'
     const stage = TASK_STAGE_LABELS.find(label => log.includes(label))
     if (stage) return stage
   }
@@ -72,6 +75,14 @@ function taskStatusClass(status: string) {
 function taskStatusTitle(status: string) {
   if (status === 'completed' || status === 'stopped') return '最近任务状态'
   return '当前阶段'
+}
+
+function taskStopReasonLabel(reason?: string) {
+  if (reason === 'daily_limit') return '今日发送额度已用完，岗位已保留在“待发送招呼语”；明日额度恢复后再重试。'
+  if (reason === 'outside_window') return '当前不在发送时间窗口内，岗位已保留在“待发送招呼语”。'
+  if (reason === 'day_off') return '今日触发防检测休息策略，岗位已保留在“待发送招呼语”。'
+  if (reason === 'stopped') return '任务已按你的要求停止，尚未处理的岗位仍保留在队列中。'
+  return reason
 }
 
 function taskErrorFeedback(error: string) {
@@ -161,6 +172,9 @@ const taskMetricItems = [
   { key: 'ai_passed', label: 'AI通过' },
   { key: 'ai_filtered', label: 'AI过滤' },
   { key: 'ai_failed', label: 'AI失败' },
+  { key: 'send_success', label: '发送成功' },
+  { key: 'send_deferred', label: '待下次发送' },
+  { key: 'send_remaining_quota', label: '今日剩余额度' },
 ]
 
 function jobSubtitle(job: Job) {
@@ -317,6 +331,13 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
       return next.length === previous.length ? previous : next
     })
   }, [visibleJobIds])
+
+  useEffect(() => {
+    const handleConfigSaved = () => { void refresh() }
+    window.addEventListener('bosshunter-config-saved', handleConfigSaved)
+    return () => window.removeEventListener('bosshunter-config-saved', handleConfigSaved)
+  }, [refresh])
+
   const pendingGreetingJobs = workbench.pending_greetings
   const activeTask = workbench.task
   const visibleTask = activeTask || workbench.last_task
@@ -655,10 +676,40 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
                 </details>
               </div>
             )}
-            {visibleTask.stop_reason && <div className="mt-3 rounded-2xl bg-[#FFF0E5] px-3 py-2 text-sm text-primary">{visibleTask.stop_reason}</div>}
+            {visibleTask.stop_reason && (
+              <div className={`mt-3 rounded-2xl px-3 py-3 text-sm ${visibleTask.stop_reason === 'daily_limit' ? 'border border-amber-200 bg-amber-50 text-amber-800' : 'bg-[#FFF0E5] text-primary'}`}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="font-black">{visibleTask.stop_reason === 'daily_limit' ? '本次未发送' : '任务说明'}</div>
+                    <div className="mt-1">{taskStopReasonLabel(visibleTask.stop_reason)}</div>
+                  </div>
+                  {visibleTask.stop_reason === 'daily_limit' && (
+                    <Button size="sm" variant="secondary" onClick={() => { window.location.href = '/config?section=throttle' }}>
+                      去设置发送额度
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>
+
+      {workbench.send_quota?.exhausted && (
+        <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5 text-amber-800">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-black">今日发送额度已用完</h3>
+              <p className="mt-1 text-sm leading-6">
+                今日已发送 {workbench.send_quota.sent}/{workbench.send_quota.daily_limit} 条，未发送岗位已保留在“待发送招呼语”；明日额度恢复后再重试。
+              </p>
+            </div>
+            <Button variant="secondary" size="sm" onClick={() => { window.location.href = '/config?section=throttle' }}>
+              去设置发送额度
+            </Button>
+          </div>
+        </section>
+      )}
 
       <section>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -961,16 +1012,23 @@ function JobsPoolView() {
   const [notice, setNotice] = useState('')
   const [showRecycleBin, setShowRecycleBin] = useState(false)
   const [showScoreDialog, setShowScoreDialog] = useState(false)
+  const [quickScoring, setQuickScoring] = useState(false)
+  const [sortBy, setSortBy] = useState<JobSortKey>('created_at')
+  const [sortOrder, setSortOrder] = useState<JobSortOrder>('desc')
   const [recycleJobs, setRecycleJobs] = useState<Job[]>([])
   const [recycleSelectedIds, setRecycleSelectedIds] = useState<string[]>([])
   const [recycleLoading, setRecycleLoading] = useState(false)
   const [permanentDeleteIds, setPermanentDeleteIds] = useState<string[]>([])
   const [permanentDeleteAcknowledged, setPermanentDeleteAcknowledged] = useState(false)
-  const { items, total, allTotal, loading, error, refresh: refreshJobs } = useJobSearch(filters, page, pageSize)
+  const { items, total, allTotal, loading, error, refresh: refreshJobs } = useJobSearch(filters, page, pageSize, sortBy, sortOrder)
+  const { workbench: deliveryWorkbench } = useDashboard('workbench')
+  const deliveryTask = deliveryWorkbench.task?.mode === 'deliver'
+    ? deliveryWorkbench.task
+    : deliveryWorkbench.last_task?.mode === 'deliver' ? deliveryWorkbench.last_task : null
 
   useEffect(() => {
     setPage(0)
-  }, [filters.query, filters.minScore, filters.salaryMin, filters.salaryMax, filters.status, filters.createdWithin, filters.sourcePlatform])
+  }, [filters.query, filters.minScore, filters.salaryMin, filters.salaryMax, filters.status, filters.createdWithin, filters.sourcePlatform, filters.education, filters.recruitmentType])
 
   const toggleSelected = (jobId: string) => {
     setSelectedIds(previous => previous.includes(jobId) ? previous.filter(id => id !== jobId) : [...previous, jobId])
@@ -982,6 +1040,16 @@ function JobsPoolView() {
     setSelectedIds(previous => allPageSelected
       ? previous.filter(id => !pageIds.has(id))
       : [...new Set([...previous, ...pageIds])])
+  }
+
+  const changeSort = (nextSortBy: JobSortKey) => {
+    setPage(0)
+    if (nextSortBy === sortBy) {
+      setSortOrder(previous => previous === 'asc' ? 'desc' : 'asc')
+      return
+    }
+    setSortBy(nextSortBy)
+    setSortOrder(nextSortBy === 'score' || nextSortBy === 'created_at' ? 'desc' : 'asc')
   }
 
   const loadRecycleBin = async () => {
@@ -1139,6 +1207,18 @@ function JobsPoolView() {
     setNotice(`独立评分已启动，共 ${data.run?.remaining_job_ids?.length || 0} 个岗位。`)
   }
 
+  const startQuickScoring = async () => {
+    if (!window.confirm('将对岗位池中所有未评分或评分失败的岗位启动 AI 评分，可能产生模型费用，是否继续？')) return
+    setQuickScoring(true)
+    try {
+      await startScoring({ scope: 'pending', limit: null, job_ids: [], force_rescore: false })
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : '启动 AI 评分失败')
+    } finally {
+      setQuickScoring(false)
+    }
+  }
+
   if (showRecycleBin) {
     return (
       <div className="space-y-3">
@@ -1198,10 +1278,30 @@ function JobsPoolView() {
         <span className="rounded-full bg-[#FFF0E5] px-3 py-2 font-bold text-primary">已选择 {selectedIds.length} 条</span>
         {selectedIds.length > 0 && <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>清空选择</Button>}
         <Button variant="destructive" size="sm" disabled={!selectedIds.length} onClick={() => void softDelete(selectedIds)}>移入回收站</Button>
-        <Button size="sm" onClick={() => setShowScoreDialog(true)}>单独 AI 评分</Button>
+        <Button size="sm" onClick={() => void startQuickScoring()} disabled={quickScoring || !total}>
+          {quickScoring ? '启动评分中…' : '一键 AI 评分'}
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => setShowScoreDialog(true)}>评分选项</Button>
         <ExportMenu onExport={exportJobs} hasSelection={selectedIds.length > 0} hasFiltered={total > 0} />
       </div>
       {notice && <div className="mb-4 rounded-xl bg-[#FFF0E5] px-4 py-3 text-sm text-primary">{notice}</div>}
+      {deliveryTask && (
+        <div className="mb-4 rounded-2xl border border-card-border bg-[#FFFCFA] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-black">投递队列</div>
+              <p className="mt-1 text-xs text-muted">只展示已人工确认的 BOSS 发送任务；智联和 51job 不会进入此队列。</p>
+            </div>
+            <span className="rounded-full bg-[#FFF0E5] px-3 py-1 text-xs font-black text-primary">
+              {deliveryTask.status === 'running' ? '处理中' : deliveryTask.status === 'completed' ? '已完成' : deliveryTask.status === 'failed' ? '失败' : deliveryTask.status}
+            </span>
+          </div>
+          <div className="mt-3 rounded-xl border border-card-border bg-white px-3 py-2 text-sm">
+            <div className="font-bold">{deliveryTask.logs?.[deliveryTask.logs.length - 1] || '队列已创建，等待执行'}</div>
+            <div className="mt-1 text-xs text-muted">任务 ID：{deliveryTask.id}</div>
+          </div>
+        </div>
+      )}
       {error && <div className="mb-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-danger">{error}</div>}
       <JobsTable
         jobs={items}
@@ -1213,6 +1313,9 @@ function JobsPoolView() {
         onToggleSelected={toggleSelected}
         onSoftDelete={job => void softDelete([job.id])}
         loading={loading}
+        sortBy={sortBy}
+        sortOrder={sortOrder}
+        onSortChange={changeSort}
       />
       <ScoreJobsDialog
         open={showScoreDialog}

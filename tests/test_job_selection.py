@@ -646,6 +646,9 @@ class JobSelectionTests(unittest.TestCase):
         self.assertEqual(report["failed_count"], 1)
         self.assertEqual(report["deferred_count"], 1)
         self.assertEqual(report["quota_deferred_count"], 1)
+        self.assertEqual(report["already_sent"], 0)
+        self.assertEqual(report["daily_limit"], 2)
+        self.assertEqual(report["remaining_quota"], 2)
         self.assertEqual(report["stop_reason"], "daily_limit")
 
     def test_pending_confirmation_excludes_jobs_with_greetings(self):
