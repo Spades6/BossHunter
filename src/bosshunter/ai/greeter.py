@@ -9,6 +9,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from bosshunter.ai.credentials import AIRequestError, call_anthropic_text
 from bosshunter.cancellation import OperationCancelled, run_cancellable
+from bosshunter.collection.text import clean_job_description
 from bosshunter.db import add_history, get_db, get_jobs_by_status, update_job_greeting, update_job_status
 
 console = Console()
@@ -231,6 +232,14 @@ def _parse_review_response(response: str | None) -> dict | None:
     return None
 
 
+def _platform_label(job: dict) -> str:
+    return {
+        "boss": "BOSS直聘",
+        "zhilian": "智联招聘",
+        "51job": "前程无忧",
+    }.get(str(job.get("source_platform") or "boss"), "招聘平台")
+
+
 def _review_greeting(
     greeting: str,
     job: dict,
@@ -239,7 +248,7 @@ def _review_greeting(
 ) -> dict | None:
     """Self-evaluate a greeting. Returns scores dict or None on failure."""
     prompt = REVIEW_PROMPT.format(
-        platform="智联招聘" if str(job.get("source_platform") or "boss") == "zhilian" else "BOSS直聘",
+        platform=_platform_label(job),
         title=job["title"],
         company=job["company"],
         greeting=greeting,
@@ -260,7 +269,7 @@ def _generate_greeting_once(
     """Generate a single greeting attempt."""
     jd_limit = 250 if compact else 500
     resume_limit = 800 if compact else 1500
-    jd_summary = _truncate_prompt_text(job.get("jd", ""), jd_limit) or "无详细描述"
+    jd_summary = _truncate_prompt_text(clean_job_description(job.get("jd", "")), jd_limit) or "无详细描述"
     critique_section = f"\n7. 上次生成的问题: {critique}，请避免此问题\n" if critique else ""
 
     # Build extra highlights from config (portfolio URL, personal strengths, etc.)
@@ -273,7 +282,7 @@ def _generate_greeting_once(
     extra_highlights = "\n".join(highlight_lines) if highlight_lines else "（无额外亮点配置）"
 
     prompt = GREETING_PROMPT.format(
-        platform="智联招聘" if str(job.get("source_platform") or "boss") == "zhilian" else "BOSS直聘",
+        platform=_platform_label(job),
         resume_summary=_truncate_prompt_text(resume_summary, resume_limit),
         title=job["title"],
         company=job["company"],

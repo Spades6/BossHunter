@@ -872,7 +872,7 @@ function CollectionProgressPanel({ progress }: { progress: CollectionProgress })
         {Object.entries(progress.platforms || {}).map(([platform, state]) => (
           <div key={platform} className="rounded-xl border border-card-border bg-white p-3">
             <div className="flex items-center justify-between text-sm font-black">
-              <span>{platform === 'boss' ? 'BOSS 直聘' : '智联招聘'}</span>
+              <span>{platform === 'boss' ? 'BOSS 直聘' : platform === 'zhilian' ? '智联招聘' : '前程无忧'}</span>
               <span>{state.new}/{state.target == null ? '不限' : state.target}{state.percent == null ? '' : ` · ${state.percent}%`}</span>
             </div>
             <div className="mt-1 text-xs text-muted">
@@ -923,7 +923,7 @@ function JobDetailModal({ job, onClose }: { job: Job; onClose: () => void }) {
           <InfoBlock label="HR" value={[job.hr_name, job.hr_title].filter(Boolean).join(' · ') || '-'} />
           <InfoBlock label="招聘者活跃" value={job.hr_active || '活跃度未知'} />
           <InfoBlock label="公司" value={[job.company_size, job.company_industry].filter(Boolean).join(' · ') || '-'} />
-          <InfoBlock label="来源平台" value={job.source_platform === 'zhilian' ? '智联招聘｜独立动作适配器' : 'BOSS 直聘'} />
+          <InfoBlock label="来源平台" value={job.source_platform === 'zhilian' ? '智联招聘｜当前只开放采集' : job.source_platform === '51job' ? '前程无忧｜当前只开放采集' : 'BOSS 直聘'} />
           <InfoBlock label="匹配分" value={String(job.score || '-')} />
           <InfoBlock label="定制简历" value={job.resume_path || '未生成'} />
         </div>

@@ -10,6 +10,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from bosshunter.ai.credentials import AIRequestError, call_anthropic_text, get_ai_api_key
 from bosshunter.cancellation import OperationCancelled, run_cancellable
+from bosshunter.collection.text import clean_job_description
 from bosshunter.db import (
     add_history,
     get_db,
@@ -167,7 +168,7 @@ def _build_scoring_prompt(job: dict, resume: str, *, compact: bool = False) -> s
         company=job["company"],
         salary=job["salary"],
         experience=job["experience"],
-        jd=_truncate_prompt_text(job.get("jd", ""), jd_limit),
+        jd=_truncate_prompt_text(clean_job_description(job.get("jd", "")), jd_limit),
     )
 
 

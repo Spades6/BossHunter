@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
+from bosshunter.collection.text import clean_job_description
 
-PlatformId = Literal["boss", "zhilian"]
+
+PlatformId = Literal["boss", "zhilian", "51job"]
 
 
 @dataclass(frozen=True)
@@ -44,8 +46,8 @@ class JobCandidate:
 
     @property
     def storage_id(self) -> str:
-        if self.platform == "zhilian":
-            return f"zhilian:{self.source_job_id}"
+        if self.platform != "boss":
+            return f"{self.platform}:{self.source_job_id}"
         return self.source_job_id
 
     def as_job_record(self) -> dict[str, Any]:
@@ -57,7 +59,7 @@ class JobCandidate:
             "city": self.city,
             "source_city_code": self.city_code,
             "experience": self.experience,
-            "jd": self.jd,
+            "jd": clean_job_description(self.jd),
             "hr_name": self.hr_name,
             "hr_title": self.hr_title,
             "hr_active": self.hr_active,

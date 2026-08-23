@@ -6,7 +6,7 @@ import { Select } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import type { WorkbenchTask } from '@/hooks/useDashboard'
 
-type PlatformId = 'boss' | 'zhilian'
+type PlatformId = 'boss' | 'zhilian' | '51job'
 
 interface PlatformDraft {
   enabled: boolean
@@ -19,7 +19,7 @@ interface PlatformDraft {
   unlimited: boolean
 }
 
-interface ZhilianCityOption {
+interface PlatformCityOption {
   name: string
   code: string
 }
@@ -34,7 +34,8 @@ interface CollectJobsDialogProps {
 
 const initialDrafts: Record<PlatformId, PlatformDraft> = {
   boss: { enabled: true, keywords: '', cities: '', cityCodes: '', maxPages: '3', sort: 'default', targetCount: '10', unlimited: false },
-  zhilian: { enabled: false, keywords: '', cities: '', cityCodes: '', maxPages: '3', sort: 'default', targetCount: '10', unlimited: false },
+  zhilian: { enabled: false, keywords: '', cities: '', cityCodes: '', maxPages: '1', sort: 'default', targetCount: '3', unlimited: false },
+  '51job': { enabled: false, keywords: '', cities: '上海', cityCodes: '上海=020000', maxPages: '1', sort: 'default', targetCount: '3', unlimited: false },
 }
 
 function splitValues(value: string) {
@@ -55,7 +56,7 @@ function normalizeCityName(value: string) {
   return city.replace(/市$/, '')
 }
 
-function findZhilianCity(city: string, options: ZhilianCityOption[]) {
+function findPlatformCity(city: string, options: PlatformCityOption[]) {
   const target = normalizeCityName(city)
   return options.find(option => normalizeCityName(option.name) === target)
 }
@@ -86,9 +87,9 @@ function draftFromConfig(config: Record<string, any> | null, platform: PlatformI
     cityCodes: configured.city_codes && typeof configured.city_codes === 'object'
       ? Object.entries(configured.city_codes).map(([city, code]) => `${city}=${code}`).join(', ')
       : '',
-    maxPages: String(configured.max_pages || 3),
+    maxPages: String(configured.max_pages || (platform === 'boss' ? 3 : 1)),
     sort: configured.sort || (platform === 'boss' ? 'default' : 'default'),
-    targetCount: target == null ? '10' : String(target),
+    targetCount: target == null ? String(platform === 'boss' ? 10 : 3) : String(target),
     unlimited: target == null,
   }
 }
@@ -98,7 +99,8 @@ export function CollectJobsDialog({ open, mode = 'collect', activeTask, onClose,
   const [order, setOrder] = useState<PlatformId[]>(['boss'])
   const [autoScore, setAutoScore] = useState(false)
   const [error, setError] = useState('')
-  const [zhilianCities, setZhilianCities] = useState<ZhilianCityOption[]>([])
+  const [zhilianCities, setZhilianCities] = useState<PlatformCityOption[]>([])
+  const [job51Cities, setJob51Cities] = useState<PlatformCityOption[]>([])
 
   useEffect(() => {
     if (!open) return
@@ -109,13 +111,18 @@ export function CollectJobsDialog({ open, mode = 'collect', activeTask, onClose,
         if (cancelled) return
         const nextBoss = draftFromConfig(config, 'boss')
         const nextZhilian = draftFromConfig(config, 'zhilian')
+        const nextJob51 = draftFromConfig(config, '51job')
+        if (mode === 'full') {
+          nextZhilian.enabled = false
+          nextJob51.enabled = false
+        }
         const configuredOrder = Array.isArray(config?.collection?.default_order) ? config.collection.default_order : ['boss']
-        const enabledFromConfig = (['boss', 'zhilian'] as PlatformId[]).filter(platform => config?.platforms?.[platform]?.enabled === true)
+        const enabledFromConfig = (['boss', 'zhilian', '51job'] as PlatformId[]).filter(platform => config?.platforms?.[platform]?.enabled === true)
         const nextOrder = [...configuredOrder, ...enabledFromConfig].filter((item: unknown, index, values): item is PlatformId =>
-          (item === 'boss' || item === 'zhilian') && values.indexOf(item) === index,
+          (item === 'boss' || item === 'zhilian' || item === '51job') && values.indexOf(item) === index,
         )
-        setDrafts({ boss: nextBoss, zhilian: nextZhilian })
-        setOrder(nextOrder.length ? nextOrder : ['boss'])
+        setDrafts({ boss: nextBoss, zhilian: nextZhilian, '51job': nextJob51 })
+        setOrder(mode === 'full' ? ['boss'] : (nextOrder.length ? nextOrder : ['boss']))
         setAutoScore(mode === 'full' || config?.collection?.auto_score_default === true)
       })
       .catch(() => {
@@ -130,6 +137,16 @@ export function CollectJobsDialog({ open, mode = 'collect', activeTask, onClose,
       })
       .catch(() => {
         if (!cancelled) setError('读取内置智联城市目录失败，可稍后重试。')
+      })
+    fetch('/api/cities?platform=51job', { cache: 'no-store' })
+      .then(response => response.json())
+      .then(data => {
+        if (cancelled) return
+        if (Array.isArray(data.cities)) setJob51Cities(data.cities)
+        if (!data.ok) setError(data.error || '读取 51job 城市目录失败。')
+      })
+      .catch(() => {
+        if (!cancelled) setError('读取 51job 城市目录失败，可稍后重试。')
       })
     return () => { cancelled = true }
   }, [open, mode])
@@ -175,16 +192,18 @@ export function CollectJobsDialog({ open, mode = 'collect', activeTask, onClose,
       const keywords = splitValues(draft.keywords)
       const cities = splitValues(draft.cities)
       if (!keywords.length || !cities.length) {
-        setError(`${platform === 'boss' ? 'BOSS 直聘' : '智联招聘'} 需要至少一个关键词和城市。`)
+        const label = platform === 'boss' ? 'BOSS 直聘' : platform === 'zhilian' ? '智联招聘' : '前程无忧'
+        setError(`${label} 需要至少一个关键词和城市。`)
         return
       }
       const configuredCodes = parseCityCodes(draft.cityCodes)
-      const cityCodes = platform === 'zhilian'
-        ? Object.fromEntries(cities.map(city => [city, findZhilianCity(city, zhilianCities)?.code || configuredCodes[city] || '']).filter(([, code]) => code))
+      const platformCities = platform === 'zhilian' ? zhilianCities : platform === '51job' ? job51Cities : []
+      const cityCodes = platform !== 'boss'
+        ? Object.fromEntries(cities.map(city => [city, findPlatformCity(city, platformCities)?.code || configuredCodes[city] || '']).filter(([, code]) => code))
         : configuredCodes
-      if (platform === 'zhilian' && cities.some(city => !cityCodes[city])) {
+      if (platform !== 'boss' && cities.some(city => !cityCodes[city])) {
         const missing = cities.filter(city => !cityCodes[city]).join('、')
-        setError(`内置智联城市目录暂未收录：${missing}。请从城市提示中选择已支持城市，不需要填写编码。`)
+        setError(`${platform === 'zhilian' ? '智联' : '51job'} 内置城市目录暂未收录：${missing}。请选择已验证城市。`)
         return
       }
       platforms[platform] = {
@@ -217,7 +236,7 @@ export function CollectJobsDialog({ open, mode = 'collect', activeTask, onClose,
             <div className="mt-3 grid gap-2 md:grid-cols-2">
               {Object.entries(activeTask.progress.platforms).map(([platform, state]) => (
                 <div key={platform} className="rounded-xl border border-card-border bg-white p-3 text-sm">
-                  <div className="flex items-center justify-between font-black"><span>{platform === 'boss' ? 'BOSS 直聘' : '智联招聘'}</span><span>{state.new}/{state.target ?? '不限'}{state.percent == null ? '' : ` · ${state.percent}%`}</span></div>
+                  <div className="flex items-center justify-between font-black"><span>{platform === 'boss' ? 'BOSS 直聘' : platform === 'zhilian' ? '智联招聘' : '前程无忧'}</span><span>{state.new}/{state.target ?? '不限'}{state.percent == null ? '' : ` · ${state.percent}%`}</span></div>
                   <div className="mt-1 text-xs text-muted">{state.status} · {state.city || '等待'} · {state.keyword || ''} · 第 {state.page || 0}/{state.max_pages || 0} 页</div>
                   <div className="mt-1 text-xs text-muted">扫描 {state.seen || 0} · 重复 {state.duplicate || 0} · 过滤 {state.filtered || 0} · 解析失败 {state.parse_failed || 0} · 保存失败 {state.save_failed || 0}</div>
                   {state.message && <div className="mt-1 text-xs text-primary">{state.message}</div>}
@@ -228,44 +247,46 @@ export function CollectJobsDialog({ open, mode = 'collect', activeTask, onClose,
         )}
 
         <div className="mt-5 grid gap-4 lg:grid-cols-2">
-          {(['boss', 'zhilian'] as PlatformId[]).map(platform => {
+          {(['boss', 'zhilian', '51job'] as PlatformId[]).map(platform => {
             const draft = drafts[platform]
-            const label = platform === 'boss' ? 'BOSS 直聘' : '智联招聘'
+            const label = platform === 'boss' ? 'BOSS 直聘' : platform === 'zhilian' ? '智联招聘' : '前程无忧'
+            const platformCities = platform === 'zhilian' ? zhilianCities : job51Cities
             return (
               <section key={platform} className={`rounded-2xl border p-4 ${draft.enabled ? 'border-primary/30 bg-[#FFFCFA]' : 'border-card-border bg-white opacity-70'}`}>
                 <div className="flex items-center justify-between gap-3">
-                  <label className="flex items-center gap-2 text-lg font-black"><input type="checkbox" checked={draft.enabled} onChange={event => togglePlatform(platform, event.target.checked)} className="h-4 w-4 accent-primary" />{label}</label>
+                  <label className="flex items-center gap-2 text-lg font-black"><input type="checkbox" checked={draft.enabled} disabled={mode === 'full' && platform !== 'boss'} onChange={event => togglePlatform(platform, event.target.checked)} className="h-4 w-4 accent-primary" />{label}</label>
                   {draft.enabled && <div className="text-xs font-bold text-primary">队列 {enabledOrder.indexOf(platform) + 1}</div>}
                 </div>
                 {draft.enabled && <div className="mt-4 space-y-3">
                   <label className="block text-xs font-bold text-muted">关键词（逗号或换行分隔）<Input value={draft.keywords} onChange={event => updateDraft(platform, 'keywords', event.target.value)} placeholder="AI 产品经理, 产品运营" /></label>
-                  <label className="block text-xs font-bold text-muted">城市（逗号或换行分隔）<Input list={platform === 'zhilian' ? 'zhilian-city-options' : undefined} value={draft.cities} onChange={event => updateDraft(platform, 'cities', event.target.value)} placeholder="北京" /></label>
-                  {platform === 'zhilian' ? <>
-                    <datalist id="zhilian-city-options">{zhilianCities.map(city => <option key={city.code} value={city.name} />)}</datalist>
+                  <label className="block text-xs font-bold text-muted">城市（逗号或换行分隔）<Input list={platform !== 'boss' ? `${platform}-city-options` : undefined} value={draft.cities} onChange={event => updateDraft(platform, 'cities', event.target.value)} placeholder={platform === '51job' ? '上海' : '北京'} /></label>
+                  {platform !== 'boss' ? <>
+                    <datalist id={`${platform}-city-options`}>{platformCities.map(city => <option key={city.code} value={city.name} />)}</datalist>
                     <div className="rounded-xl border border-card-border bg-white px-3 py-2 text-xs text-muted">
                       <div className="font-bold text-foreground">平台城市编码</div>
-                      <p className="mt-1">系统会根据城市名称自动匹配智联编码，不需要查询或填写。</p>
+                      <p className="mt-1">系统只使用已验证的{platform === 'zhilian' ? '智联' : '51job'}城市编码，不会猜测。</p>
                       {!!splitValues(draft.cities).length && <div className="mt-2 flex flex-wrap gap-1">
-                        {splitValues(draft.cities).map(city => <span key={city} className={`rounded-full px-2 py-1 ${findZhilianCity(city, zhilianCities) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                          {city} · {findZhilianCity(city, zhilianCities) ? '已自动识别' : '暂未收录'}
+                        {splitValues(draft.cities).map(city => <span key={city} className={`rounded-full px-2 py-1 ${findPlatformCity(city, platformCities) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                          {city} · {findPlatformCity(city, platformCities) ? '已自动识别' : '暂未收录'}
                         </span>)}
                       </div>}
                     </div>
                   </> : <p className="rounded-xl border border-card-border bg-white px-3 py-2 text-xs text-muted">BOSS 城市编码由系统内置匹配，无需填写。</p>}
                   <div className="grid grid-cols-3 gap-2">
                     <label className="text-xs font-bold text-muted">最大页数<Input type="number" min={1} max={10} value={draft.maxPages} onChange={event => updateDraft(platform, 'maxPages', event.target.value)} /></label>
-                    <label className="text-xs font-bold text-muted">排序<Select value={draft.sort} onChange={event => updateDraft(platform, 'sort', event.target.value)}><option value="default">默认</option><option value="newest">最新</option></Select></label>
+                    <label className="text-xs font-bold text-muted">排序<Select value={draft.sort} onChange={event => updateDraft(platform, 'sort', event.target.value)}><option value="default">默认</option>{platform !== '51job' && <option value="newest">最新</option>}</Select></label>
                     <label className="text-xs font-bold text-muted">目标新增<Input type="number" min={1} max={500} disabled={draft.unlimited} value={draft.targetCount} onChange={event => updateDraft(platform, 'targetCount', event.target.value)} /></label>
                   </div>
                   <label className="flex items-center justify-between rounded-xl border border-card-border bg-white px-3 py-2 text-xs font-bold text-muted">不限数量（仍受最大页数限制）<Switch checked={draft.unlimited} onChange={value => updateDraft(platform, 'unlimited', value)} /></label>
                 </div>}
+                {!draft.enabled && mode === 'full' && platform !== 'boss' && <p className="mt-3 text-xs text-muted">当前只支持“岗位采集”，不进入发送全流程。</p>}
               </section>
             )
           })}
         </div>
 
         <div className="mt-4 rounded-2xl border border-card-border bg-[#FFFCFA] p-4">
-          <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-black">执行顺序</div><p className="mt-1 text-xs text-muted">双平台不会并行打开浏览器；默认 BOSS → 智联。</p></div><div className="flex gap-2">{enabledOrder.map((platform, index) => <div key={platform} className="flex items-center gap-1 rounded-full bg-white px-3 py-1 text-xs font-black text-primary"><span>{index + 1}. {platform === 'boss' ? 'BOSS' : '智联'}</span><button type="button" onClick={() => move(platform, -1)} disabled={index === 0} aria-label="上移"><ArrowUp className="h-3 w-3" /></button><button type="button" onClick={() => move(platform, 1)} disabled={index === enabledOrder.length - 1} aria-label="下移"><ArrowDown className="h-3 w-3" /></button></div>)}</div></div>
+          <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-black">执行顺序</div><p className="mt-1 text-xs text-muted">平台串行采集；智联和前程无忧暂不执行发送或监听。</p></div><div className="flex gap-2">{enabledOrder.map((platform, index) => <div key={platform} className="flex items-center gap-1 rounded-full bg-white px-3 py-1 text-xs font-black text-primary"><span>{index + 1}. {platform === 'boss' ? 'BOSS' : platform === 'zhilian' ? '智联' : '51job'}</span><button type="button" onClick={() => move(platform, -1)} disabled={index === 0} aria-label="上移"><ArrowUp className="h-3 w-3" /></button><button type="button" onClick={() => move(platform, 1)} disabled={index === enabledOrder.length - 1} aria-label="下移"><ArrowDown className="h-3 w-3" /></button></div>)}</div></div>
         </div>
 
         <label className="mt-4 flex items-center justify-between rounded-2xl border border-card-border bg-white p-4"><div><div className="text-sm font-black">{mode === 'full' ? '全流程自动评分' : '采集后自动评分'}</div><p className="mt-1 text-xs leading-5 text-muted">{mode === 'full' ? '全流程必须先评分；评分后进入人工确认，再按平台适配器执行招呼和监测。' : '默认关闭；开启后只评分本轮新增岗位，评分结束即停止，不发送消息、不投递、不监测。'}</p></div><Switch checked={mode === 'full' || autoScore} onChange={mode === 'full' ? () => undefined : setAutoScore} disabled={mode === 'full'} /></label>

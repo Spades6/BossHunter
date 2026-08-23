@@ -86,6 +86,7 @@ export function JobFilterBar({
             <option value="">来源平台：全部</option>
             <option value="boss">BOSS 直聘</option>
             <option value="zhilian">智联招聘</option>
+            <option value="51job">前程无忧</option>
           </Select>
         )}
         <div className="flex min-h-9 min-w-0 flex-wrap items-center justify-between gap-2 rounded-md border border-card-border bg-white px-3 py-1">

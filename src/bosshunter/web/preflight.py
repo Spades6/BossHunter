@@ -94,7 +94,7 @@ def collect_preflight_checks(mode: str, config: dict, options: dict | None = Non
 					"全流程平台能力",
 					"pass",
 					"已选择的平台均接入全流程",
-					f"执行顺序：{' → '.join(full_options.get('platform_order', []))}；智联动作使用独立页面适配器。",
+					f"执行顺序：{' → '.join(full_options.get('platform_order', []))}；只有支持投递的平台可进入全流程。",
 				)
 			)
 	return checks

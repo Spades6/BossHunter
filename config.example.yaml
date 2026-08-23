@@ -50,6 +50,16 @@ platforms:
       max_pages: 3
       sort: default
       target_count: 10
+  51job:
+    enabled: false
+    # 51job 目前只开放采集/评分/招呼语生成，真实发送和监听仍锁定。
+    search:
+      keywords: []
+      cities: ["上海"]
+      city_codes: {"上海": "020000"}
+      max_pages: 1
+      sort: default
+      target_count: 3
 
 scoring:
   threshold: 70

@@ -65,7 +65,7 @@ class AiPreflightTests(unittest.TestCase):
 class BrowserPreflightTests(unittest.TestCase):
 	@patch("bosshunter.web.preflight.check_ai_connection")
 	@patch("bosshunter.web.preflight.check_browser_connection")
-	def test_full_flow_accepts_enabled_zhilian_before_start(self, browser_check, ai_check):
+	def test_full_flow_uses_only_explicit_full_flow_platform_order(self, browser_check, ai_check):
 		ai_check.return_value = []
 		browser_check.return_value = []
 		config = {
@@ -80,7 +80,8 @@ class BrowserPreflightTests(unittest.TestCase):
 
 		platform_check = next(check for check in checks if check["id"] == "full_flow_platform")
 		self.assertEqual(platform_check["status"], "pass")
-		self.assertIn("智联", platform_check["detail"])
+		self.assertIn("执行顺序：boss", platform_check["detail"])
+		self.assertIn("只有支持投递的平台", platform_check["detail"])
 
 	@patch("bosshunter.web.preflight.run_browser_diagnostics")
 	def test_running_runtime_is_reused_when_node_is_not_on_path(self, diagnostics):

@@ -19,7 +19,6 @@ from bosshunter.browser import (
 )
 from bosshunter.db import get_db, get_jobs_ready_to_send, update_job_status, add_history, add_risk_event
 from bosshunter.collection.capabilities import platform_supports
-from bosshunter.executor.zhilian_actions import send_zhilian_greeting_once
 from bosshunter.throttle import RequestThrottle, SendWindowChecker, ProgressiveBackoff, should_take_day_off
 
 console = Console()
@@ -680,9 +679,6 @@ JS_SEND_GREETING = """
 
 
 def _send_greeting_once(job: dict, greeting: str, throttle_config: dict) -> tuple[dict, str | None]:
-    if str(job.get("source_platform") or "boss").strip().lower() == "zhilian":
-        return send_zhilian_greeting_once(job, greeting, throttle_config)
-
     stop_event = throttle_config.get("_workbench_stop_event")
     existing_target_ids = {
         str(target.get("targetId") or "")

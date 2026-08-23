@@ -40,33 +40,35 @@ class PlatformDeliveryGuardTests(TestCase):
         ).decode("utf-8")
         return result["status"], json.loads(payload)
 
-    def test_zhilian_job_uses_delivery_adapter_and_resume_route(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base_dir = Path(tmp)
-            db = get_db(base_dir / "data" / "bosshunter.db")
-            try:
-                insert_job(db, {
-                    "id": "zhilian:zl-1",
-                    "title": "智联岗位",
-                    "company": "智联公司",
-                    "jd": "JD",
-                    "url": "https://sou.zhaopin.com/job/1.html",
-                    "source_platform": "zhilian",
-                    "source_job_id": "zl-1",
-                })
-            finally:
-                db.close()
-            server.set_base_dir(base_dir)
+    def test_collection_only_platforms_reject_delivery_and_resume_routes(self):
+        for platform, job_id, url in (
+            ("zhilian", "zhilian:zl-1", "https://www.zhaopin.com/jobdetail/zl-1.htm"),
+            ("51job", "51job:job-1", "https://jobs.51job.com/shanghai/job-1.html"),
+        ):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as tmp:
+                base_dir = Path(tmp)
+                db = get_db(base_dir / "data" / "bosshunter.db")
+                try:
+                    insert_job(db, {
+                        "id": job_id,
+                        "title": "采集岗位",
+                        "company": "示例公司",
+                        "jd": "JD",
+                        "url": url,
+                        "source_platform": platform,
+                        "source_job_id": job_id.split(":", 1)[1],
+                    })
+                finally:
+                    db.close()
+                server.set_base_dir(base_dir)
 
-            with mock.patch.object(server.task_runner, "start", return_value={"id": "zhilian-delivery"}) as start:
-                deliver_status, deliver_payload = self._request(
-                    "/api/workbench/deliver",
-                    {"job_ids": ["zhilian:zl-1"]},
-                )
-            resume_status, resume_payload = self._request("/api/jobs/zhilian:zl-1/mark-resume-sent")
+                with mock.patch.object(server.task_runner, "start") as start:
+                    deliver_status, deliver_payload = self._request(
+                        "/api/workbench/deliver",
+                        {"job_ids": [job_id]},
+                    )
+                resume_status, resume_payload = self._request(f"/api/jobs/{job_id}/mark-resume-sent")
 
-        self.assertTrue(deliver_status.startswith("200"), deliver_payload)
-        self.assertEqual(deliver_payload["id"], "zhilian-delivery")
-        start.assert_called_once()
-        self.assertTrue(resume_status.startswith("200"), resume_payload)
-        self.assertTrue(resume_payload["success"])
+                self.assertTrue(deliver_status.startswith("403"), deliver_payload)
+                self.assertTrue(resume_status.startswith("403"), resume_payload)
+                start.assert_not_called()

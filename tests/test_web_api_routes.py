@@ -1875,7 +1875,7 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertEqual(task_config["_collection_options"]["platforms"]["boss"]["target_count"], 4)
         self.assertTrue(task_config["_collection_options"]["auto_score"])
 
-    def test_full_task_accepts_enabled_zhilian_before_starting(self):
+    def test_full_task_rejects_collection_only_platform_from_saved_config(self):
         config = {
             "search": {"keywords": ["人力"], "cities": ["深圳"]},
             "profile": {"resume_path": "C:/resume.md"},
@@ -1891,14 +1891,11 @@ class WebApiRouteTests(unittest.TestCase):
         ) as start:
             status, _, body = self._request("/api/workbench/task", method="POST", json_body={"mode": "full"})
 
-        self.assertTrue(status.startswith("200"), body)
-        self.assertEqual(json.loads(body)["id"], "full-with-zhilian")
-        start.assert_called_once()
-        task_config = start.call_args.args[1]
-        self.assertEqual(task_config["_collection_options"]["platform_order"], ["boss", "zhilian"])
-        self.assertTrue(task_config["_collection_options"]["auto_score"])
+        self.assertTrue(status.startswith("400"), body)
+        self.assertEqual(json.loads(body)["collection_only_platforms"], ["zhilian"])
+        start.assert_not_called()
 
-    def test_full_task_accepts_dialog_options_and_persists_global_search_settings(self):
+    def test_full_task_rejects_collection_only_platform_from_dialog(self):
         config = {
             "profile": {"resume_path": "C:/resume.md"},
             "ai": {"api_key": "test-key"},
@@ -1931,14 +1928,10 @@ class WebApiRouteTests(unittest.TestCase):
                 json_body={"mode": "full", "options": options},
             )
 
-        self.assertTrue(status.startswith("200"), body)
-        self.assertEqual(json.loads(body)["id"], "full-dialog-options")
-        task_config = start.call_args.args[1]
-        self.assertTrue(task_config["_collection_options"]["auto_score"])
-        persisted = write_config.call_args.args[0]
-        self.assertEqual(persisted["collection"]["default_order"], ["zhilian"])
-        self.assertEqual(persisted["platforms"]["zhilian"]["search"]["cities"], ["深圳"])
-        self.assertTrue(persisted["platforms"]["zhilian"]["enabled"])
+        self.assertTrue(status.startswith("400"), body)
+        self.assertEqual(json.loads(body)["collection_only_platforms"], ["zhilian"])
+        start.assert_not_called()
+        write_config.assert_not_called()
 
 
 if __name__ == "__main__":

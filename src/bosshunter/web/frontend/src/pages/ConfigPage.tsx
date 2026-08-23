@@ -42,7 +42,7 @@ const AI_SERVICES = {
 } as const
 
 type AiService = keyof typeof AI_SERVICES
-type PlatformId = 'boss' | 'zhilian'
+type PlatformId = 'boss' | 'zhilian' | '51job'
 
 export default function ConfigPage() {
   const { config, schema, loading, saving, dirty, error, message, updateConfig, saveConfig, resetConfig } = useConfig()
@@ -52,6 +52,7 @@ export default function ConfigPage() {
   const [aiTest, setAiTest] = useState<{ testing: boolean; ok?: boolean; message?: string }>({ testing: false })
   const [cityOptions, setCityOptions] = useState<CityOption[]>([])
   const [zhilianCityOptions, setZhilianCityOptions] = useState<CityOption[]>([])
+  const [job51CityOptions, setJob51CityOptions] = useState<CityOption[]>([])
   const [cityRefreshing, setCityRefreshing] = useState(false)
   const [cityMessage, setCityMessage] = useState('')
 
@@ -68,6 +69,12 @@ export default function ConfigPage() {
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data.cities)) setZhilianCityOptions(data.cities)
+      })
+      .catch(() => {})
+    fetch('/api/cities?platform=51job', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data.cities)) setJob51CityOptions(data.cities)
       })
       .catch(() => {})
   }, [])
@@ -172,9 +179,9 @@ export default function ConfigPage() {
       keywords: specific.keywords?.length ? specific.keywords : legacy.keywords,
       cities: specific.cities?.length ? specific.cities : legacy.cities,
       city_codes: Object.keys(specific.city_codes || {}).length ? specific.city_codes : legacy.city_codes,
-      max_pages: specific.max_pages || legacy.max_pages || 3,
+      max_pages: specific.max_pages || legacy.max_pages || (platform === 'boss' ? 3 : 1),
       sort: specific.sort || legacy.sort || 'default',
-      target_count: specific.target_count ?? legacy.target_count ?? 10,
+      target_count: specific.target_count ?? legacy.target_count ?? (platform === 'boss' ? 10 : 3),
     }
   }
 
@@ -184,9 +191,10 @@ export default function ConfigPage() {
   }
 
   const updatePlatformCities = (platform: PlatformId, cities: string[]) => {
-    const cityCodes = platform === 'zhilian'
+    const platformCityOptions = platform === 'zhilian' ? zhilianCityOptions : job51CityOptions
+    const cityCodes = platform !== 'boss'
       ? Object.fromEntries(cities.map(city => {
-        const found = zhilianCityOptions.find(option => option.name.replace(/市$/, '') === city.replace(/市$/, ''))
+        const found = platformCityOptions.find(option => option.name.replace(/市$/, '') === city.replace(/市$/, ''))
         return [city, found?.code || '']
       }).filter(([, code]) => code))
       : Object.fromEntries(cityOptions.filter(city => cities.includes(city.name)).map(city => [city.name, city.code]))
@@ -198,7 +206,7 @@ export default function ConfigPage() {
   const setPlatformEnabled = (platform: PlatformId, enabled: boolean) => {
     updateConfig(`platforms.${platform}.enabled`, enabled)
     const currentOrder: PlatformId[] = Array.isArray(config?.collection?.default_order)
-      ? config.collection.default_order.filter((item: unknown): item is PlatformId => item === 'boss' || item === 'zhilian')
+      ? config.collection.default_order.filter((item: unknown): item is PlatformId => item === 'boss' || item === 'zhilian' || item === '51job')
       : ['boss'] as PlatformId[]
     const nextOrder = enabled
       ? [...currentOrder, ...(!currentOrder.includes(platform) ? [platform] : [])]
@@ -207,8 +215,8 @@ export default function ConfigPage() {
   }
 
   const setCollectionOrder = (value: string) => {
-    const enabled = (['boss', 'zhilian'] as PlatformId[]).filter(platform => config?.platforms?.[platform]?.enabled !== false)
-    const requested = value.split(',').filter((item): item is PlatformId => item === 'boss' || item === 'zhilian')
+    const enabled = (['boss', 'zhilian', '51job'] as PlatformId[]).filter(platform => config?.platforms?.[platform]?.enabled !== false)
+    const requested = value.split(',').filter((item): item is PlatformId => item === 'boss' || item === 'zhilian' || item === '51job')
     const next = [...requested, ...enabled.filter(platform => !requested.includes(platform))]
     updateConfig('collection.default_order', next.length ? next : ['boss'])
   }
@@ -305,11 +313,12 @@ export default function ConfigPage() {
         <SectionCard title="搜索设置" sectionKey="search" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">
             <p className="rounded-xl border border-card-border bg-[#FFFCFA] px-3 py-2 text-xs leading-5 text-muted">
-              这里是岗位采集的全局配置。单独采集窗口和运行全流程都会读取已保存的平台设置；智联城市编码由内置目录自动匹配，不需要手工填写。
+              智联和前程无忧当前只开放采集、评分和招呼语生成；不会执行发送、自动回复或监听。
             </p>
-            {(['boss', 'zhilian'] as PlatformId[]).map(platform => {
+            {(['boss', 'zhilian', '51job'] as PlatformId[]).map(platform => {
               const search = platformSearch(platform)
-              const label = platform === 'boss' ? 'BOSS 直聘' : '智联招聘'
+              const label = platform === 'boss' ? 'BOSS 直聘' : platform === 'zhilian' ? '智联招聘' : '前程无忧'
+              const platformCityOptions = platform === 'zhilian' ? zhilianCityOptions : job51CityOptions
               const enabled = config.platforms?.[platform]?.enabled ?? platform === 'boss'
               const cities = Array.isArray(search.cities) && search.cities.length
                 ? search.cities
@@ -338,23 +347,23 @@ export default function ConfigPage() {
                         refreshing={cityRefreshing}
                         message={cityMessage}
                       /> : <>
-                        <Input list="config-zhilian-city-options" value={cityInput} onChange={event => updatePlatformCities(platform, event.target.value.split(/[,，]/).map(value => value.trim()).filter(Boolean))} placeholder="如：深圳" />
-                        <datalist id="config-zhilian-city-options">{zhilianCityOptions.map(city => <option key={city.code} value={city.name} />)}</datalist>
-                        <p className="mt-1 text-xs text-muted">智联城市编码由系统自动匹配；当前内置 {zhilianCityOptions.length} 个城市。</p>
+                        <Input list={`config-${platform}-city-options`} value={cityInput} onChange={event => updatePlatformCities(platform, event.target.value.split(/[,，]/).map(value => value.trim()).filter(Boolean))} placeholder={platform === '51job' ? '如：上海' : '如：深圳'} />
+                        <datalist id={`config-${platform}-city-options`}>{platformCityOptions.map(city => <option key={city.code} value={city.name} />)}</datalist>
+                        <p className="mt-1 text-xs text-muted">{platform === 'zhilian' ? '智联' : '51job'}只使用已验证的城市编码；当前内置 {platformCityOptions.length} 个城市。</p>
                         {!!cities.length && <div className="mt-2 flex flex-wrap gap-1">{cities.map((city: string) => {
-                          const matched = zhilianCityOptions.find(option => option.name.replace(/市$/, '') === city.replace(/市$/, ''))
+                          const matched = platformCityOptions.find(option => option.name.replace(/市$/, '') === city.replace(/市$/, ''))
                           return <span key={city} className={`rounded-full px-2 py-1 text-xs ${matched ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{city} · {matched ? '已自动识别' : '暂未收录'}</span>
                         })}</div>}
                       </>}
                     </Field>
                     <div className="grid gap-3 md:grid-cols-3">
                       <Field label="最大页数">
-                        <Input type="number" value={search.max_pages || 3} onChange={event => updatePlatformSearch(platform, 'max_pages', Number(event.target.value))} min={1} max={10} />
+                        <Input type="number" value={search.max_pages || (platform === 'boss' ? 3 : 1)} onChange={event => updatePlatformSearch(platform, 'max_pages', Number(event.target.value))} min={1} max={10} />
                       </Field>
                       <Field label="排序">
                         <Select value={search.sort || 'default'} onChange={event => updatePlatformSearch(platform, 'sort', event.target.value)}>
                           <option value="default">默认</option>
-                          <option value="newest">最新</option>
+                          {platform !== '51job' && <option value="newest">最新</option>}
                         </Select>
                       </Field>
                       <Field label="目标新增">
@@ -363,7 +372,7 @@ export default function ConfigPage() {
                     </div>
                     <div className="flex items-center justify-between rounded-xl border border-card-border bg-white px-3 py-2 text-xs font-bold text-muted">
                       不限数量（仍受最大页数限制）
-                      <Switch checked={targetCount == null} onChange={value => updatePlatformSearch(platform, 'target_count', value ? null : 10)} />
+                      <Switch checked={targetCount == null} onChange={value => updatePlatformSearch(platform, 'target_count', value ? null : (platform === 'boss' ? 10 : 3))} />
                     </div>
                   </div>}
                 </div>
@@ -376,6 +385,8 @@ export default function ConfigPage() {
                   <option value="zhilian">智联招聘</option>
                   <option value="boss,zhilian">BOSS 直聘 → 智联招聘</option>
                   <option value="zhilian,boss">智联招聘 → BOSS 直聘</option>
+                  <option value="51job">前程无忧</option>
+                  <option value="boss,zhilian,51job">BOSS → 智联 → 前程无忧</option>
                 </Select>
               </Field>
               <div className="flex items-center justify-between rounded-xl border border-card-border bg-[#FFFCFA] px-3 py-2 text-xs font-bold text-muted">

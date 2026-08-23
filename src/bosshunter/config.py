@@ -109,6 +109,17 @@ DEFAULTS: dict[str, Any] = {
                 "target_count": 10,
             },
         },
+        "51job": {
+            "enabled": False,
+            "search": {
+                "keywords": [],
+                "cities": ["上海"],
+                "city_codes": {"上海": "020000"},
+                "max_pages": 1,
+                "sort": "default",
+                "target_count": 3,
+            },
+        },
     },
     "scoring": {
         "threshold": 71,

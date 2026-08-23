@@ -49,6 +49,7 @@ from bosshunter.db import (
 from bosshunter.collection.capabilities import platform_supports
 from bosshunter.collection.orchestrator import CollectionOrchestrator, normalize_collection_options
 from bosshunter.collection.platforms.zhilian import load_zhilian_city_snapshot
+from bosshunter.collection.platforms.job51 import load_51job_city_snapshot
 from bosshunter.collection_run_store import (
 	get_collection_run,
 	list_collection_runs,
@@ -669,7 +670,10 @@ def _execute_deliver_batch(task: WorkbenchTask, config: dict) -> None:
 				f"招呼语生成失败：选择 {len(selected_job_ids)} 个岗位，仅成功生成 {generated_count} 条；未发送任何消息"
 			)
 	_log(task, "发送招呼语")
-	sent_count = send_greetings(config, force=True)
+	# The workbench must obey the same send window and day-off guard as the CLI.
+	# ``force`` remains an explicit CLI-only override and is never implied by a
+	# browser button click.
+	sent_count = send_greetings(config, force=False)
 	report = config.get("_workbench_send_report", {})
 	failed_count = int(report.get("failed_count", 0) or 0)
 	deferred_count = int(report.get("deferred_count", 0) or 0)
@@ -830,7 +834,7 @@ def api_job_search():
 		params.append(status_filter)
 	source_platform = request.params.get("source_platform", "").strip()
 	if source_platform:
-		if source_platform not in {"boss", "zhilian"}:
+		if source_platform not in {"boss", "zhilian", "51job"}:
 			return _json_response({"error": "source_platform 参数无效"}, 400)
 		conditions.append("COALESCE(source_platform, 'boss') = ?")
 		params.append(source_platform)
@@ -1146,6 +1150,15 @@ def api_workbench_task_start():
 				collection_options = normalize_collection_options(base_config, options)
 			except ValueError as exc:
 				return _json_response({"error": str(exc)}, 400)
+			collection_only = [
+				platform for platform in collection_options["platform_order"]
+				if not platform_supports(platform, "deliver")
+			]
+			if collection_only:
+				return _json_response({
+					"error": "智联和前程无忧当前只支持单独采集，不能进入发送全流程",
+					"collection_only_platforms": collection_only,
+				}, 400)
 			collection_options["auto_score"] = True
 		messages = _preflight_messages(mode, base_config, collection_options)
 		if messages:
@@ -1167,7 +1180,7 @@ def api_workbench_task_start():
 					"enabled": platform in selected_platforms,
 					"search": value,
 				}
-			for platform in ("boss", "zhilian"):
+			for platform in ("boss", "zhilian", "51job"):
 				if platform not in selected_platforms and isinstance(platform_configs.get(platform), dict):
 					platform_configs[platform]["enabled"] = False
 			base_config["platforms"] = platform_configs
@@ -1549,13 +1562,23 @@ def api_city_lookup():
 
 @app.route("/api/cities")
 def api_city_snapshot():
-	if request.params.get("platform", "").strip().lower() == "zhilian":
+	platform = request.params.get("platform", "").strip().lower()
+	if platform == "zhilian":
 		snapshot = load_zhilian_city_snapshot()
 		return _json_response({
 			"ok": True,
 			"source": snapshot["source"],
 			"count": len(snapshot["cities"]),
 			"updated_at": snapshot.get("fetched_at"),
+			"note": snapshot.get("note", ""),
+			"cities": snapshot["cities"],
+		})
+	if platform == "51job":
+		snapshot = load_51job_city_snapshot()
+		return _json_response({
+			"ok": True,
+			"source": snapshot["source"],
+			"count": len(snapshot["cities"]),
 			"note": snapshot.get("note", ""),
 			"cities": snapshot["cities"],
 		})
@@ -1580,12 +1603,14 @@ def api_city_snapshot():
 
 @app.route("/api/cities/refresh", method="POST")
 def api_city_refresh():
-	if request.params.get("platform", "").strip().lower() == "zhilian":
+	platform = request.params.get("platform", "").strip().lower()
+	if platform in {"zhilian", "51job"}:
+		label = "智联" if platform == "zhilian" else "51job"
 		return _json_response({
 			"ok": False,
 			"source": "local",
 			"using_local_data": True,
-			"error": "智联使用内置城市目录，不执行联网刷新；岗位采集窗口会根据城市名称自动匹配编码。",
+			"error": f"{label}使用内置城市目录，不执行联网刷新；岗位采集窗口会根据城市名称自动匹配编码。",
 		}, 409)
 	try:
 		snapshot = refresh_city_cache(DATA_DIR / "cities.cache.json")

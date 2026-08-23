@@ -2,10 +2,11 @@
 
 PLATFORM_CAPABILITIES: dict[str, frozenset[str]] = {
     "boss": frozenset({"collect", "score", "greet", "deliver", "monitor"}),
-    # Zhilian uses its own action adapter.  The shared workflow may schedule
-    # these capabilities, but each adapter must still verify the page state
-    # before recording a successful action.
-    "zhilian": frozenset({"collect", "score", "greet", "deliver", "monitor"}),
+    # New platforms start read-only. Delivery and monitoring stay locked until
+    # an authorized real-account acceptance test has verified the live DOM and
+    # the maintainer explicitly enables those capabilities in a later change.
+    "zhilian": frozenset({"collect", "score", "greet"}),
+    "51job": frozenset({"collect", "score", "greet"}),
 }
 
 

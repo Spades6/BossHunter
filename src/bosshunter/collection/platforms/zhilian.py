@@ -8,6 +8,7 @@ browser session before being treated as stable platform facts.
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -47,6 +48,8 @@ JD_CLASSES = (
     "job-description",
 )
 DETAIL_PATH_PATTERN = re.compile(r"/(?:jobdetail|job|position|detail)/[^/?]+", re.IGNORECASE)
+DETAIL_DELAY_MIN_SECONDS = 8.0
+DETAIL_DELAY_MAX_SECONDS = 15.0
 
 
 def load_zhilian_city_snapshot() -> dict[str, Any]:
@@ -211,6 +214,9 @@ JS_EXTRACT_LIST = """
 
 JS_EXTRACT_DETAIL = """
 (() => {
+  const pageText = (document.body ? document.body.innerText : '') + ' ' + document.title;
+  const blockedMatch = pageText.match(/验证码|滑块|访问频繁|频率限制|账号异常|拒绝访问/);
+  const loginRequired = /请先登录|请登录|登录后(?:查看|继续|获取)|登录失效/.test(pageText);
   const expectedCity = "__EXPECTED_CITY__";
   const first = (selectors) => selectors.map((s) => document.querySelector(s)).find(Boolean);
   const jd = first(['.describtion-card__detail-content', '.describtion__detail-content', '.job-detail', '.jobdetail', '.job-intro', '.job-description']);
@@ -221,6 +227,7 @@ JS_EXTRACT_DETAIL = """
   const cityText = cityNode ? cityNode.textContent.trim() : '';
   const city = expectedCity && cityText.includes(expectedCity) ? expectedCity : cityText;
   return JSON.stringify({
+    status: blockedMatch ? 'blocked' : loginRequired ? 'login_required' : jd ? 'ready' : 'selector_changed',
     title: title ? title.textContent.trim() : '', salary: salary ? salary.textContent.trim() : '',
     company: company ? company.textContent.trim() : '', city,
     jd: jd ? jd.textContent.trim() : '', url: window.location.href
@@ -480,7 +487,17 @@ class ZhilianBrowser:
 class ZhilianCollector:
     platform = "zhilian"
 
-    def __init__(self, *, browser: ZhilianBrowser | None = None):
+    def __init__(
+        self,
+        *,
+        browser: ZhilianBrowser | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+        delay_range: tuple[float, float] = (DETAIL_DELAY_MIN_SECONDS, DETAIL_DELAY_MAX_SECONDS),
+        uniform: Callable[[float, float], float] = random.SystemRandom().uniform,
+    ):
+        self.sleep = sleep
+        self.delay_range = delay_range
+        self.uniform = uniform
         if browser is not None:
             self.browser = browser
         else:
@@ -606,6 +623,7 @@ class ZhilianCollector:
     def collect(self, request: PlatformCollectionRequest, hooks: CollectorHooks) -> PlatformCollectionResult:
         if any(not str(request.city_codes.get(city) or "").strip() for city in request.cities):
             return PlatformCollectionResult(self.platform, "failed", "no_valid_city", "智联城市编码未配置")
+        detail_requests = 0
         for city in request.cities:
             for keyword in request.keywords:
                 target_id: str | None = None
@@ -665,11 +683,26 @@ class ZhilianCollector:
                             candidate = self._candidate_from_list(raw_item, city, keyword)
                             if candidate is None or not hooks.on_list_candidate(candidate):
                                 continue
+                            if detail_requests:
+                                delay = max(0.0, self.uniform(*self.delay_range))
+                                hooks.on_event(
+                                    phase="pacing",
+                                    keyword=keyword,
+                                    city=city,
+                                    page=page,
+                                    message=f"详情页安全间隔 {delay:.1f} 秒",
+                                )
+                                if hooks.stop_event is not None:
+                                    if hooks.stop_event.wait(delay):
+                                        return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
+                                else:
+                                    self.sleep(delay)
                             hooks.on_event(phase="loading_detail", keyword=keyword, city=city, page=page)
                             detail_target = self.browser.new_tab(candidate.url, background=True)
                             if not detail_target:
                                 hooks.on_parse_failed("无法打开智联详情页")
                                 continue
+                            detail_requests += 1
                             try:
                                 self.browser.wait_for_load(detail_target, timeout=10)
                                 raw_detail = self.browser.evaluate(detail_target, _build_detail_script(city))
@@ -679,6 +712,12 @@ class ZhilianCollector:
                                 detail = json.loads(raw_detail) if isinstance(raw_detail, str) else raw_detail
                                 if not isinstance(detail, dict):
                                     raise CollectionError("parse_failed", "智联详情返回格式无效")
+                                if detail.get("status") == "blocked":
+                                    return PlatformCollectionResult(self.platform, "blocked", "rate_limit", "智联详情页出现验证或限流，已停止整个采集队列")
+                                if detail.get("status") == "login_required":
+                                    return PlatformCollectionResult(self.platform, "blocked", "login_required", "智联详情页要求重新登录，已停止整个采集队列")
+                                if detail.get("status") == "selector_changed":
+                                    return PlatformCollectionResult(self.platform, "blocked", "selector_changed", "智联详情页结构变化，已安全停止")
                                 if not detail.get("source_job_id"):
                                     detail["source_job_id"] = candidate.source_job_id
                                 if not detail.get("url"):
