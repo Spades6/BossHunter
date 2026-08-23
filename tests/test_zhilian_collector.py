@@ -164,6 +164,12 @@ class ZhilianFixtureTests(TestCase):
             )
         self.assertIn("登录", str(error.exception))
 
+        with self.assertRaises(CollectionBlockedError) as modern_error:
+            parse_zhilian_list_html(
+                '<html><body><input placeholder="搜索职位、公司"><p>登录查看更多相关职位</p><button>立即登录</button></body></html>'
+            )
+        self.assertEqual(modern_error.exception.code, "login_required")
+
     def test_collector_uses_shared_runtime_and_stops_at_target(self):
         responses = {
             "list": json.dumps({"items": [

@@ -19,9 +19,10 @@ ZHILIAN_PAGE_STATE_SCRIPT = """
   if (/验证码|滑块|访问频繁|频率限制|账号异常|拒绝访问/.test(text)) {
     return JSON.stringify({status: 'blocked', message: '智联页面受到验证码、频率限制或账号异常拦截'});
   }
+  const strongLoginWallText = /登录查看更多|登录查看全部|立即登录/.test(text);
   const loginWallText = /请先登录|请登录|登录后(?:查看|继续|获取)|登录失效|账号登录|扫码登录/.test(text);
   const loginDialog = Boolean(document.querySelector('[role="dialog"], .login-dialog, [class*="login-modal"], [class*="login-dialog"]'));
-  if (loginWallText && (!searchInput || loginDialog)) {
+  if (strongLoginWallText || (loginWallText && (!searchInput || loginDialog))) {
     return JSON.stringify({status: 'login_required', message: '智联页面要求登录'});
   }
   if (searchInput) {

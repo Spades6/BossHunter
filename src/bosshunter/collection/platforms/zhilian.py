@@ -204,9 +204,10 @@ JS_EXTRACT_LIST = """
     };
   });
   const hasListRegion = Boolean(document.querySelector('.positionlist__list, [class*="positionlist"]'));
+  const strongLoginWallText = /登录查看更多|登录查看全部|立即登录/.test(text);
   const loginWallText = /请先登录|请登录|登录后(?:查看|继续|获取)|登录失效|账号登录|扫码登录/.test(text);
   const loginDialog = Boolean(document.querySelector('[role="dialog"], .login-dialog, [class*="login-modal"], [class*="login-dialog"]'));
-  const loginRequired = loginWallText && (!searchInput || loginDialog || !items.length);
+  const loginRequired = strongLoginWallText || (loginWallText && (!searchInput || loginDialog || !items.length));
   const status = blockedMatch ? 'blocked' : loginRequired ? 'login_required' : items.length ? 'ready' : hasListRegion ? 'empty' : 'selector_changed';
   return JSON.stringify({status, blocked_code: blockedMatch ? blockedMatch[0] : '', items, has_search_input: Boolean(searchInput)});
 })()
@@ -216,7 +217,7 @@ JS_EXTRACT_DETAIL = """
 (() => {
   const pageText = (document.body ? document.body.innerText : '') + ' ' + document.title;
   const blockedMatch = pageText.match(/验证码|滑块|访问频繁|频率限制|账号异常|拒绝访问/);
-  const loginRequired = /请先登录|请登录|登录后(?:查看|继续|获取)|登录失效/.test(pageText);
+  const loginRequired = /请先登录|请登录|登录后(?:查看|继续|获取)|登录失效|登录查看更多|登录查看全部|立即登录/.test(pageText);
   const expectedCity = "__EXPECTED_CITY__";
   const first = (selectors) => selectors.map((s) => document.querySelector(s)).find(Boolean);
   const jd = first(['.describtion-card__detail-content', '.describtion__detail-content', '.job-detail', '.jobdetail', '.job-intro', '.job-description']);
@@ -335,7 +336,7 @@ def _blocked_reason(html: str) -> tuple[str, str] | None:
         return "login_required", "智联页面报告账号异常，请人工检查登录状态"
     if "访问频繁" in text or "频率限制" in text:
         return "rate_limit", "智联页面报告访问频率受限，已停止当前平台"
-    if re.search(r"请(?:先)?登录|登录后(?:查看|继续)|登录失效|账号登录|扫码登录", text):
+    if re.search(r"请(?:先)?登录|登录后(?:查看|继续)|登录失效|账号登录|扫码登录|登录查看更多|登录查看全部|立即登录", text):
         return "login_required", "智联页面要求登录，已停止当前平台"
     return None
 
