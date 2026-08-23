@@ -1301,6 +1301,7 @@ def api_workbench_deliver():
 		job_ids = [str(job_id) for job_id in body.get("job_ids", []) if str(job_id)]
 		if not job_ids:
 			return _json_response({"error": "请选择要投递的岗位"}, 400)
+		direct_send = bool(body.get("direct_send"))
 		validation_db = _get_web_db()
 		try:
 			placeholders = ",".join("?" for _ in job_ids)
@@ -1312,7 +1313,7 @@ def api_workbench_deliver():
 				).fetchall()
 			}
 			platform_rows = validation_db.execute(
-				f"SELECT id, COALESCE(source_platform, 'boss') AS source_platform FROM jobs WHERE deleted_at IS NULL AND id IN ({placeholders})",
+				f"SELECT id, status, greeting, COALESCE(source_platform, 'boss') AS source_platform FROM jobs WHERE deleted_at IS NULL AND id IN ({placeholders})",
 				job_ids,
 			).fetchall()
 		finally:
@@ -1331,8 +1332,19 @@ def api_workbench_deliver():
 				"unsupported_platform": "unknown",
 				"invalid_ids": unsupported,
 			}, 403)
+		allowed_statuses = {"ready", "approved", "error"} if direct_send else {"ready", "approved"}
+		invalid_status_ids = [
+			str(row["id"])
+			for row in platform_rows
+			if str(row["status"] or "") not in allowed_statuses
+			or (direct_send and not str(row["greeting"] or "").strip())
+		]
+		if invalid_status_ids:
+			return _json_response({
+				"error": "所选岗位状态不允许投递，不能重复发送已投递岗位",
+				"invalid_ids": invalid_status_ids,
+			}, 409)
 
-		direct_send = bool(body.get("direct_send"))
 		status = task_runner.status()
 		active_task = status.get("active") or {}
 		active_runtime_task = task_runner._tasks.get(active_task.get("id"))

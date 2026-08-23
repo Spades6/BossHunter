@@ -889,6 +889,47 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertEqual(full_task.context["confirmed_job_ids"], ["ready-job"])
         self.assertEqual(json.loads(response_body)["id"], "full-task")
 
+    def test_web_api_deliver_rejects_already_sent_jobs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("already-sent"))
+                update_job_greeting(db, "already-sent", "已经发送过的招呼语")
+                update_job_status(db, "already-sent", "sent")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            status, _, body = self._request(
+                "/api/workbench/deliver",
+                method="POST",
+                json_body={"job_ids": ["already-sent"]},
+            )
+
+        self.assertTrue(status.startswith("409"), body)
+        self.assertEqual(json.loads(body)["invalid_ids"], ["already-sent"])
+
+    def test_web_api_direct_send_requires_a_retryable_greeting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("error-without-greeting"))
+                update_job_status(db, "error-without-greeting", "error")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            status, _, body = self._request(
+                "/api/workbench/deliver",
+                method="POST",
+                json_body={"job_ids": ["error-without-greeting"], "direct_send": True},
+            )
+
+        self.assertTrue(status.startswith("409"), body)
+        self.assertEqual(json.loads(body)["invalid_ids"], ["error-without-greeting"])
+
     def test_web_api_deliver_queues_confirmation_before_full_task_event_exists(self):
         full_task = WorkbenchTask(id="full-before-event", mode="full", label="运行全流程")
         runner = WorkbenchTaskRunner()
@@ -1017,6 +1058,7 @@ class WebApiRouteTests(unittest.TestCase):
                 for job_id in ("already-scheduled", "new-ready"):
                     insert_job(db, _job(job_id))
                     update_job_status(db, job_id, "ready")
+                    update_job_greeting(db, job_id, f"{job_id} 的待发送招呼语")
             finally:
                 db.close()
             server.set_base_dir(base_dir)
