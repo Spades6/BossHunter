@@ -51,6 +51,10 @@ def prepare_resume_content(filename: str, content: bytes) -> tuple[str, bytes]:
 	safe_name = safe_resume_filename(filename)
 	suffix = Path(safe_name).suffix.lower()
 	if suffix == ".md":
+		try:
+			content.decode("utf-8")
+		except UnicodeDecodeError as exc:
+			raise ResumeUploadError("Markdown 文件必须使用 UTF-8 编码") from exc
 		return safe_name, content
 
 	markdown = docx_to_markdown(content) if suffix == ".docx" else pdf_to_markdown(content)
