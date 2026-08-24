@@ -18,7 +18,7 @@ from bosshunter.collection.base import CollectorHooks
 from bosshunter.collection.models import JobCandidate, PlatformCollectionRequest
 from bosshunter.collection.platforms.boss import BossBrowser, BossCollector, generate_boss_job_id
 from bosshunter.config import CITY_CODES
-from bosshunter.db import count_jobs_created_today, get_db, insert_job, job_exists
+from bosshunter.db import get_db, insert_job, job_exists
 from bosshunter.job_filters import matching_blocked_company, matching_deal_breaker
 from bosshunter.platform_safety import PlatformSafetyStop
 from bosshunter.throttle import PageThrottle
@@ -47,7 +47,7 @@ def _positive_int(value: object, default: int) -> int:
         return default
 
 
-def _legacy_request(config: dict, keywords: list[str], target: int | None) -> PlatformCollectionRequest:
+def _legacy_request(config: dict, keywords: list[str]) -> PlatformCollectionRequest:
     search_config = config.get("search", {}) if isinstance(config.get("search"), dict) else {}
     cities = search_config.get("cities") or config.get("profile", {}).get("target_cities", ["北京"])
     custom_codes = search_config.get("city_codes") if isinstance(search_config.get("city_codes"), dict) else {}
@@ -58,7 +58,6 @@ def _legacy_request(config: dict, keywords: list[str], target: int | None) -> Pl
         city_codes={str(city): str(code) for city, code in custom_codes.items()},
         max_pages=min(_positive_int(search_config.get("max_pages", 3), 3), 10),
         sort=str(search_config.get("sort") or "default"),
-        target_count=target,
     )
 
 
@@ -78,19 +77,12 @@ def _scrape_jobs_impl(
         db.close()
         return 0
 
-    collection_cfg = config.get("collection", {}) if isinstance(config.get("collection"), dict) else {}
-    daily_limit = _positive_int(collection_cfg.get("daily_new_jobs_limit", 100), 100)
-    boss_created_today = count_jobs_created_today(db, source_platform="boss")
-    daily_remaining = max(daily_limit - boss_created_today, 0)
-    requested = daily_remaining if limit is None else max(int(limit), 0)
-    effective_target = min(requested, daily_remaining)
-    if effective_target <= 0:
-        report_state["stop_reason"] = "daily_new_jobs_limit"
-        console.print(f"[yellow]今日已达到 BOSS 新增岗位上限 ({daily_limit})[/yellow]")
+    effective_target = None if limit is None else max(int(limit), 0)
+    if effective_target == 0:
         db.close()
         return 0
 
-    request = _legacy_request(config, keywords, effective_target)
+    request = _legacy_request(config, keywords)
     counts = {
         "seen": 0, "new": 0, "duplicate": 0, "filtered": 0,
         "parse_failed": 0, "save_failed": 0, "search_pages": 0,
@@ -138,7 +130,10 @@ def _scrape_jobs_impl(
             if collected_job_ids is not None:
                 collected_job_ids.append(candidate.storage_id)
         emit()
-        return bool((stop_event is None or not stop_event.is_set()) and counts["new"] < effective_target)
+        return bool(
+            (stop_event is None or not stop_event.is_set())
+            and (effective_target is None or counts["new"] < effective_target)
+        )
 
     def parse_failed(_reason: str) -> None:
         counts["parse_failed"] += 1
@@ -174,8 +169,6 @@ def _scrape_jobs_impl(
         )
         if result.reason_code:
             report_state["stop_reason"] = result.reason_code
-        if counts["new"] >= daily_remaining and daily_remaining <= requested:
-            report_state["stop_reason"] = "daily_new_jobs_limit"
         report_state.update({f"{key}_count": value for key, value in counts.items()})
         emit()
         return counts["new"]

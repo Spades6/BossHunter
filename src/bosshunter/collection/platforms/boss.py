@@ -300,15 +300,12 @@ class BossCollector:
                             hooks.on_parse_failed("BOSS 详情缺少职位、公司、链接或 JD")
                             continue
                         if not hooks.on_candidate(merged):
-                            return PlatformCollectionResult(self.platform, "completed", "target_reached", "已达到目标新增数量")
+                            return PlatformCollectionResult(self.platform, "completed", "callback_stopped", "采集回调已停止")
                     if page < request.max_pages and _wait_or_stop(hooks.stop_event, 0.2, self.sleep):
                         return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
         finally:
             if worker_target:
                 self.browser.close_tab(worker_target)
-        if request.target_count is not None:
-            # The shared callback stops the adapter exactly at target_count.
-            return PlatformCollectionResult(self.platform, "completed_with_shortage", "max_pages_reached", "已达到最大页数，新增岗位不足目标")
         return PlatformCollectionResult(self.platform, "completed", "search_exhausted", "BOSS 搜索结果已采集完毕")
 
     @staticmethod

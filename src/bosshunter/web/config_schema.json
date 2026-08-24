@@ -35,8 +35,7 @@
       "icon": "ListOrdered",
       "fields": [
         {"key": "default_order", "label": "默认平台顺序", "type": "multi-select", "options": ["boss", "zhilian", "51job"], "default": ["boss"]},
-        {"key": "auto_score_default", "label": "采集后自动评分", "type": "switch", "default": false},
-        {"key": "default_target_count", "label": "默认目标新增数量", "type": "number", "min": 1, "max": 500, "default": 10}
+        {"key": "auto_score_default", "label": "采集后自动评分", "type": "switch", "default": false}
       ]
     },
     {
@@ -44,8 +43,8 @@
       "label": "平台采集设置",
       "icon": "Layers",
       "fields": [
-        {"key": "boss", "label": "BOSS 直聘独立设置", "type": "object", "description": "配置页保存 BOSS 的关键词、城市、页数、排序和目标新增数量；城市编码由系统管理"},
-        {"key": "zhilian", "label": "智联招聘独立设置", "type": "object", "description": "配置页保存智联的关键词、城市、页数、排序和目标新增数量；当前默认只开放采集、评分和招呼语生成"},
+        {"key": "boss", "label": "BOSS 直聘独立设置", "type": "object", "description": "配置页保存 BOSS 的关键词、城市、页数和排序；城市编码由系统管理"},
+        {"key": "zhilian", "label": "智联招聘独立设置", "type": "object", "description": "配置页保存智联的关键词、城市、页数和排序；当前默认只开放采集、评分和招呼语生成"},
         {"key": "51job", "label": "前程无忧独立设置", "type": "object", "description": "当前只开放已验证的上海采集、评分和招呼语生成；验证码或限流会立即停止"}
       ]
     },
@@ -63,7 +62,6 @@
       "label": "BOSS 直聘采集安全",
       "icon": "Shield",
       "fields": [
-        {"key": "daily_new_jobs_limit", "label": "BOSS 单日新增唯一岗位上限", "type": "number", "min": 1, "max": 500, "default": 100, "description": "只统计 BOSS 岗位，重复岗位不计入；智联和 51job 不占额度"},
         {"key": "daily_search_page_limit", "label": "BOSS 单日搜索页上限", "type": "number", "min": 1, "max": 200, "default": 30},
         {"key": "daily_detail_page_limit", "label": "BOSS 单日详情页尝试上限", "type": "number", "min": 1, "max": 500, "default": 150},
         {"key": "max_consecutive_page_failures", "label": "BOSS 连续页面失败停止阈值", "type": "number", "min": 1, "max": 10, "default": 3},

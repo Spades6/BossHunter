@@ -24,7 +24,7 @@ from bottle import Bottle, request, response, static_file, abort
 from bosshunter import __version__
 from bosshunter.ai.credentials import get_ai_api_key
 from bosshunter.cities import CityRefreshError, get_city_map, load_city_snapshot, refresh_city_cache
-from bosshunter.config import AI_SERVICE_PRESETS, load_config
+from bosshunter.config import AI_SERVICE_PRESETS, load_config, remove_retired_collection_settings
 from bosshunter.db import (
 	JobDeletionConflictError,
 	JobManualSentConflictError,
@@ -221,7 +221,7 @@ def _write_config(config: dict) -> None:
 
 def _sanitize_config_for_write(data):
 	"""Remove browser-only fields and preserve existing secrets on blank posts."""
-	cleaned = deepcopy(data)
+	cleaned = remove_retired_collection_settings(deepcopy(data))
 	ai_cfg = cleaned.get("ai")
 	if not isinstance(ai_cfg, dict):
 		return cleaned
@@ -393,7 +393,6 @@ def _execute_collect(task: WorkbenchTask, config: dict) -> None:
 
 def _stop_or_log_boss_collection_reason(task: WorkbenchTask, stop_reason: str) -> None:
 	limit_labels = {
-		"daily_new_jobs_limit": "BOSS 单日新增岗位上限",
 		"daily_search_page_limit": "BOSS 单日搜索页上限",
 		"daily_detail_page_limit": "BOSS 单日详情页上限",
 		"daily_platform_page_limit": "BOSS 单日页面访问总上限",

@@ -186,7 +186,6 @@ export default function ConfigPage() {
       city_codes: Object.keys(specific.city_codes || {}).length ? specific.city_codes : legacy.city_codes,
       max_pages: specific.max_pages || legacy.max_pages || (platform === 'boss' ? 3 : 1),
       sort: specific.sort || legacy.sort || 'default',
-      target_count: specific.target_count ?? legacy.target_count ?? (platform === 'boss' ? 10 : 3),
     }
   }
 
@@ -359,7 +358,6 @@ export default function ConfigPage() {
               const cities = Array.isArray(search.cities) && search.cities.length
                 ? search.cities
                 : platform === 'boss' ? (config.profile?.target_cities || []) : []
-              const targetCount = search.target_count
               const cityInput = cities.join(', ')
               return (
                 <div key={platform} className={`rounded-2xl border p-4 ${enabled ? 'border-primary/30 bg-[#FFFCFA]' : 'border-card-border bg-white opacity-70'}`}>
@@ -392,7 +390,7 @@ export default function ConfigPage() {
                         })}</div>}
                       </>}
                     </Field>
-                    <div className="grid gap-3 md:grid-cols-3">
+                    <div className="grid gap-3 md:grid-cols-2">
                       <Field label="最大页数">
                         <Input type="number" value={search.max_pages || (platform === 'boss' ? 3 : 1)} onChange={event => updatePlatformSearch(platform, 'max_pages', Number(event.target.value))} min={1} max={10} />
                       </Field>
@@ -402,13 +400,6 @@ export default function ConfigPage() {
                           {platform !== '51job' && <option value="newest">最新</option>}
                         </Select>
                       </Field>
-                      <Field label="目标新增">
-                        <Input type="number" value={targetCount == null ? '' : targetCount} disabled={targetCount == null} onChange={event => updatePlatformSearch(platform, 'target_count', Number(event.target.value))} min={1} max={500} placeholder="目标数量" />
-                      </Field>
-                    </div>
-                    <div className="flex items-center justify-between rounded-xl border border-card-border bg-white px-3 py-2 text-xs font-bold text-muted">
-                      不限数量（仍受最大页数限制）
-                      <Switch checked={targetCount == null} onChange={value => updatePlatformSearch(platform, 'target_count', value ? null : (platform === 'boss' ? 10 : 3))} />
                     </div>
                   </div>}
                 </div>
@@ -437,12 +428,9 @@ export default function ConfigPage() {
         <SectionCard title="BOSS 直聘采集安全" sectionKey="collection" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">
             <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              以下额度只适用于 BOSS 直聘，都是单日最大值，不是采集目标。重复 BOSS 岗位不占新增额度；智联和 51job 完全不计入。
+              以下页面访问额度只适用于 BOSS 直聘；智联和 51job 不占用。
             </p>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="BOSS 单日新增唯一岗位上限">
-                <Input type="number" value={config.collection?.daily_new_jobs_limit ?? 100} onChange={e => updateConfig('collection.daily_new_jobs_limit', Number(e.target.value))} min={1} max={500} />
-              </Field>
               <Field label="BOSS 单日搜索页上限">
                 <Input type="number" value={config.collection?.daily_search_page_limit ?? 30} onChange={e => updateConfig('collection.daily_search_page_limit', Number(e.target.value))} min={1} max={200} />
               </Field>

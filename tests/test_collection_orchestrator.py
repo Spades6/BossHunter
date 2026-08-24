@@ -24,7 +24,7 @@ def _candidate(platform: str, source_id: str, title: str = "正常岗位") -> Jo
     )
 
 
-def _options(*, order=None, auto_score=False, target=2):
+def _options(*, order=None, auto_score=False):
     order = order or ["boss"]
     values = {}
     for platform in order:
@@ -34,7 +34,6 @@ def _options(*, order=None, auto_score=False, target=2):
             "city_codes": {"北京": "530"} if platform == "zhilian" else {"北京": "101010100"},
             "max_pages": 1,
             "sort": "default",
-            "target_count": target,
         }
     return {"platform_order": order, "auto_score": auto_score, "platforms": values}
 
@@ -63,32 +62,7 @@ class _FakeCollector:
 
 
 class CollectionOrchestratorTests(TestCase):
-    def test_boss_daily_cap_skips_only_boss_and_continues_external_collection(self):
-        events = []
-        registry = CollectorRegistry({
-            "boss": lambda: _FakeCollector("boss", events, [_candidate("boss", "should-not-open")]),
-            "zhilian": lambda: _FakeCollector("zhilian", events, [_candidate("zhilian", "external-new")]),
-        })
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "collection.db"
-            db = get_db(db_path)
-            try:
-                insert_job(db, _candidate("boss", "already-counted").as_job_record())
-            finally:
-                db.close()
-            result = CollectionOrchestrator(
-                {"collection": {"daily_new_jobs_limit": 1}},
-                db_path=db_path,
-                registry=registry,
-            ).run(_options(order=["boss", "zhilian"], target=1))
-
-        self.assertNotIn("start:boss", events)
-        self.assertIn("start:zhilian", events)
-        self.assertEqual(result["platforms"]["boss"]["reason_code"], "daily_new_jobs_limit")
-        self.assertEqual(result["platforms"]["zhilian"]["new"], 1)
-        self.assertEqual(result["collected_job_ids"], ["zhilian:external-new"])
-
-    def test_two_platforms_are_strictly_serial_and_target_counts_only_new_rows(self):
+    def test_two_platforms_are_strictly_serial_and_save_only_new_rows(self):
         events = []
         boss_candidates = [
             _candidate("boss", "duplicate"),
@@ -119,7 +93,7 @@ class CollectionOrchestratorTests(TestCase):
 
             with patch("bosshunter.collection.orchestrator.insert_job_if_new", side_effect=insert):
                 result = CollectionOrchestrator(config, db_path=db_path, registry=registry).run(
-                    _options(order=["boss", "zhilian"], target=2)
+                    _options(order=["boss", "zhilian"])
                 )
 
             db = get_db(db_path)
@@ -128,8 +102,7 @@ class CollectionOrchestratorTests(TestCase):
             finally:
                 db.close()
 
-        self.assertEqual(events[:2], ["start:boss", "target:boss"])
-        self.assertEqual(events[2], "start:zhilian")
+        self.assertEqual(events, ["start:boss", "start:zhilian"])
         self.assertEqual(result["platforms"]["boss"]["new"], 2)
         self.assertEqual(result["platforms"]["boss"]["duplicate"], 1)
         self.assertEqual(result["platforms"]["boss"]["filtered"], 1)
@@ -145,7 +118,7 @@ class CollectionOrchestratorTests(TestCase):
             db_path = Path(tmp) / "collection.db"
             with patch("bosshunter.ai.scorer.score_jobs") as score_jobs:
                 result = CollectionOrchestrator({}, db_path=db_path, registry=registry).run(
-                    _options(auto_score=True, target=1)
+                    _options(auto_score=True)
                 )
         score_jobs.assert_called_once()
         kwargs = score_jobs.call_args.kwargs
@@ -157,7 +130,7 @@ class CollectionOrchestratorTests(TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with patch("bosshunter.ai.scorer.score_jobs") as score_jobs:
                 CollectionOrchestrator({}, db_path=Path(tmp) / "collection.db", registry=registry).run(
-                    _options(auto_score=False, target=1)
+                    _options(auto_score=False)
                 )
         score_jobs.assert_not_called()
 
@@ -172,7 +145,7 @@ class CollectionOrchestratorTests(TestCase):
             config = {"_workbench_stop_event": stop_event}
             with patch("bosshunter.ai.scorer.score_jobs") as score_jobs:
                 result = CollectionOrchestrator(config, db_path=Path(tmp) / "collection.db", registry=registry).run(
-                    _options(order=["boss", "zhilian"], auto_score=True, target=5)
+                    _options(order=["boss", "zhilian"], auto_score=True)
                 )
         self.assertEqual(events, ["start:boss"])
         self.assertEqual(result["status"], "stopped")
@@ -198,7 +171,6 @@ class CollectionOrchestratorTests(TestCase):
                     "cities": ["北京市"],
                     "max_pages": 1,
                     "sort": "default",
-                    "target_count": 1,
                 },
             },
         })
@@ -214,7 +186,6 @@ class CollectionOrchestratorTests(TestCase):
                     "city_codes": {"北京": "101010100"},
                     "max_pages": 1,
                     "sort": "default",
-                    "target_count": 1,
                 },
             },
         })

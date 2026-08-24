@@ -13,7 +13,6 @@ from bosshunter.db import (
     set_platform_safety_lock,
 )
 
-
 class PlatformSafetyStop(RuntimeError):
     """Raised before another platform page is opened when a safety guard stops work."""
 

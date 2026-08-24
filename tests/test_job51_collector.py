@@ -23,7 +23,7 @@ class Job51CollectorTests(TestCase):
         search = options["platforms"]["51job"]
         self.assertEqual(search["city_codes"], {"上海": "020000"})
         self.assertEqual(search["max_pages"], 1)
-        self.assertEqual(search["target_count"], 3)
+        self.assertNotIn("target_count", search)
 
     def test_collection_uses_platform_identity_and_rate_limit(self):
         list_payload = json.dumps({"status": "ready", "jobs": [
@@ -74,11 +74,11 @@ class Job51CollectorTests(TestCase):
             sleep=sleeps.append,
             uniform=lambda _low, _high: 13.0,
         ).collect(
-            PlatformCollectionRequest("51job", ["AI 产品"], ["上海"], {"上海": "020000"}, max_pages=1, target_count=2),
+            PlatformCollectionRequest("51job", ["AI 产品"], ["上海"], {"上海": "020000"}, max_pages=1),
             hooks,
         )
 
-        self.assertEqual(result.reason_code, "target_reached")
+        self.assertEqual(result.reason_code, "callback_stopped")
         self.assertEqual([candidate.storage_id for candidate in collected], ["51job:job-1", "51job:job-2"])
         self.assertEqual(sleeps, [13.0])
         self.assertEqual(clean_job_description(collected[0].jd), "负责需求分析，要求会 SQL。")
@@ -147,7 +147,7 @@ class Job51CollectorTests(TestCase):
             hooks,
         )
 
-        self.assertEqual(result.reason_code, "target_reached")
+        self.assertEqual(result.reason_code, "callback_stopped")
         self.assertEqual(evaluations, 3)
         self.assertEqual(sleeps, [0.75, 0.75])
 

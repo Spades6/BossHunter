@@ -15,8 +15,6 @@ interface PlatformDraft {
   cityCodes: string
   maxPages: string
   sort: string
-  targetCount: string
-  unlimited: boolean
 }
 
 interface PlatformCityOption {
@@ -33,9 +31,9 @@ interface CollectJobsDialogProps {
 }
 
 const initialDrafts: Record<PlatformId, PlatformDraft> = {
-  boss: { enabled: true, keywords: '', cities: '', cityCodes: '', maxPages: '3', sort: 'default', targetCount: '10', unlimited: false },
-  zhilian: { enabled: false, keywords: '', cities: '', cityCodes: '', maxPages: '1', sort: 'default', targetCount: '3', unlimited: false },
-  '51job': { enabled: false, keywords: '', cities: '上海', cityCodes: '上海=020000', maxPages: '1', sort: 'default', targetCount: '3', unlimited: false },
+  boss: { enabled: true, keywords: '', cities: '', cityCodes: '', maxPages: '3', sort: 'default' },
+  zhilian: { enabled: false, keywords: '', cities: '', cityCodes: '', maxPages: '1', sort: 'default' },
+  '51job': { enabled: false, keywords: '', cities: '上海', cityCodes: '上海=020000', maxPages: '1', sort: 'default' },
 }
 
 function splitValues(value: string) {
@@ -74,12 +72,10 @@ function draftFromConfig(config: Record<string, any> | null, platform: PlatformI
     city_codes: Object.keys(specific.city_codes || {}).length ? specific.city_codes : legacy.city_codes,
     max_pages: specific.max_pages || legacy.max_pages,
     sort: specific.sort || legacy.sort,
-    target_count: specific.target_count ?? legacy.target_count,
   }
   const cities = Array.isArray(configured.cities) && configured.cities.length
     ? configured.cities
     : platform === 'boss' ? (config?.profile?.target_cities || []) : []
-  const target = configured.target_count
   return {
     enabled: config?.platforms?.[platform]?.enabled ?? platform === 'boss',
     keywords: Array.isArray(configured.keywords) ? configured.keywords.join(', ') : '',
@@ -89,8 +85,6 @@ function draftFromConfig(config: Record<string, any> | null, platform: PlatformI
       : '',
     maxPages: String(configured.max_pages || (platform === 'boss' ? 3 : 1)),
     sort: configured.sort || (platform === 'boss' ? 'default' : 'default'),
-    targetCount: target == null ? String(platform === 'boss' ? 10 : 3) : String(target),
-    unlimited: target == null,
   }
 }
 
@@ -212,7 +206,6 @@ export function CollectJobsDialog({ open, mode = 'collect', activeTask, onClose,
         city_codes: cityCodes,
         max_pages: Number(draft.maxPages),
         sort: draft.sort,
-        target_count: draft.unlimited ? null : Number(draft.targetCount),
       }
     }
     onStart({ platform_order: enabledOrder, auto_score: mode === 'full' ? true : autoScore, platforms })
@@ -225,7 +218,7 @@ export function CollectJobsDialog({ open, mode = 'collect', activeTask, onClose,
           <div>
             <div className="text-xs font-black tracking-[0.18em] text-primary">COLLECT JOBS</div>
             <h2 className="mt-1 text-2xl font-black">{mode === 'full' ? '全流程采集设置' : '岗位采集'}</h2>
-            <p className="mt-1 text-sm leading-6 text-muted">平台会按队列严格串行执行；只有真正通过过滤、去重并成功入库的岗位计入目标。</p>
+            <p className="mt-1 text-sm leading-6 text-muted">平台会按队列严格串行执行；每个平台只设置最大页数和排序。</p>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose} aria-label="关闭"><X className="h-5 w-5" /></Button>
         </div>
@@ -236,7 +229,7 @@ export function CollectJobsDialog({ open, mode = 'collect', activeTask, onClose,
             <div className="mt-3 grid gap-2 md:grid-cols-2">
               {Object.entries(activeTask.progress.platforms).map(([platform, state]) => (
                 <div key={platform} className="rounded-xl border border-card-border bg-white p-3 text-sm">
-                  <div className="flex items-center justify-between font-black"><span>{platform === 'boss' ? 'BOSS 直聘' : platform === 'zhilian' ? '智联招聘' : '前程无忧'}</span><span>{state.new}/{state.target ?? '不限'}{state.percent == null ? '' : ` · ${state.percent}%`}</span></div>
+                  <div className="flex items-center justify-between font-black"><span>{platform === 'boss' ? 'BOSS 直聘' : platform === 'zhilian' ? '智联招聘' : '前程无忧'}</span><span>新增 {state.new}</span></div>
                   <div className="mt-1 text-xs text-muted">{state.status} · {state.city || '等待'} · {state.keyword || ''} · 第 {state.page || 0}/{state.max_pages || 0} 页</div>
                   <div className="mt-1 text-xs text-muted">扫描 {state.seen || 0} · 重复 {state.duplicate || 0} · 过滤 {state.filtered || 0} · 解析失败 {state.parse_failed || 0} · 保存失败 {state.save_failed || 0}</div>
                   {state.message && <div className="mt-1 text-xs text-primary">{state.message}</div>}
@@ -272,12 +265,10 @@ export function CollectJobsDialog({ open, mode = 'collect', activeTask, onClose,
                       </div>}
                     </div>
                   </> : <p className="rounded-xl border border-card-border bg-white px-3 py-2 text-xs text-muted">BOSS 城市编码由系统内置匹配，无需填写。</p>}
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     <label className="text-xs font-bold text-muted">最大页数<Input type="number" min={1} max={10} value={draft.maxPages} onChange={event => updateDraft(platform, 'maxPages', event.target.value)} /></label>
                     <label className="text-xs font-bold text-muted">排序<Select value={draft.sort} onChange={event => updateDraft(platform, 'sort', event.target.value)}><option value="default">默认</option>{platform !== '51job' && <option value="newest">最新</option>}</Select></label>
-                    <label className="text-xs font-bold text-muted">目标新增<Input type="number" min={1} max={500} disabled={draft.unlimited} value={draft.targetCount} onChange={event => updateDraft(platform, 'targetCount', event.target.value)} /></label>
                   </div>
-                  <label className="flex items-center justify-between rounded-xl border border-card-border bg-white px-3 py-2 text-xs font-bold text-muted">不限数量（仍受最大页数限制）<Switch checked={draft.unlimited} onChange={value => updateDraft(platform, 'unlimited', value)} /></label>
                 </div>}
                 {!draft.enabled && mode === 'full' && platform !== 'boss' && <p className="mt-3 text-xs text-muted">当前只支持“岗位采集”，不进入发送全流程。</p>}
               </section>

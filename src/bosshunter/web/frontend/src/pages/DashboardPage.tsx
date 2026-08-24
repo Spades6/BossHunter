@@ -146,7 +146,7 @@ const modes: Array<{ mode: WorkbenchMode; title: string; description: string }> 
   {
     mode: 'collect',
     title: '单独采集',
-    description: '打开岗位采集窗口，选择 BOSS/智联、目标数量和执行顺序；默认只采集不评分。',
+    description: '打开岗位采集窗口，选择 BOSS/智联/51job、最大页数、排序和执行顺序；默认只采集不评分。',
   },
   {
     mode: 'monitor',
@@ -925,7 +925,7 @@ function CollectionProgressPanel({ progress }: { progress: CollectionProgress })
           <div key={platform} className="rounded-xl border border-card-border bg-white p-3">
             <div className="flex items-center justify-between text-sm font-black">
               <span>{platform === 'boss' ? 'BOSS 直聘' : platform === 'zhilian' ? '智联招聘' : '前程无忧'}</span>
-              <span>{state.new}/{state.target == null ? '不限' : state.target}{state.percent == null ? '' : ` · ${state.percent}%`}</span>
+              <span>新增 {state.new}</span>
             </div>
             <div className="mt-1 text-xs text-muted">
               {state.status === 'queued' ? '等待前序平台完成' : `${state.city || '城市未开始'} · ${state.keyword || '关键词未开始'} · 第 ${state.page || 0}/${state.max_pages || 0} 页`}

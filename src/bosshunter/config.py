@@ -82,13 +82,10 @@ DEFAULTS: dict[str, Any] = {
         "city_codes": {},
         "max_pages": 3,
         "sort": "default",
-        "target_count": 10,
     },
     "collection": {
         "default_order": ["boss"],
         "auto_score_default": False,
-        "default_target_count": 10,
-        "daily_new_jobs_limit": 100,
         "daily_search_page_limit": 30,
         "daily_detail_page_limit": 150,
         "max_consecutive_page_failures": 3,
@@ -103,7 +100,6 @@ DEFAULTS: dict[str, Any] = {
                 "city_codes": {},
                 "max_pages": 3,
                 "sort": "default",
-                "target_count": 10,
             },
         },
         "zhilian": {
@@ -114,7 +110,6 @@ DEFAULTS: dict[str, Any] = {
                 "city_codes": {},
                 "max_pages": 3,
                 "sort": "default",
-                "target_count": 10,
             },
         },
         "51job": {
@@ -125,7 +120,6 @@ DEFAULTS: dict[str, Any] = {
                 "city_codes": {"上海": "020000"},
                 "max_pages": 1,
                 "sort": "default",
-                "target_count": 3,
             },
         },
     },
@@ -209,10 +203,31 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
 
 
 def _normalize_config_sections(config: dict[str, Any]) -> dict[str, Any]:
-    """Replace malformed top-level sections with their safe defaults."""
+    """Replace malformed sections and discard retired collection-count settings."""
     for section, defaults in DEFAULTS.items():
         if isinstance(defaults, dict) and not isinstance(config.get(section), dict):
             config[section] = _deep_copy_dict(defaults)
+
+    return remove_retired_collection_settings(config)
+
+
+def remove_retired_collection_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove collection-count settings that are no longer supported."""
+
+    # These settings existed briefly, but a result-count limit is not a page-access
+    # safety control. Ignore stale values so old config files cannot re-enable it or
+    # make the removed fields reappear in the Web UI/API.
+    collection = config.get("collection", {})
+    collection.pop("daily_new_jobs_limit", None)
+    collection.pop("default_target_count", None)
+    search = config.get("search", {})
+    search.pop("target_count", None)
+    platforms = config.get("platforms", {})
+    for platform_config in platforms.values():
+        if isinstance(platform_config, dict):
+            platform_search = platform_config.get("search", {})
+            if isinstance(platform_search, dict):
+                platform_search.pop("target_count", None)
     return config
 
 

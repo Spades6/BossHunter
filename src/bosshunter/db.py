@@ -727,24 +727,6 @@ def add_risk_event(conn: sqlite3.Connection, event_type: str, detail: str = "") 
     conn.commit()
 
 
-def count_jobs_created_today(
-    conn: sqlite3.Connection,
-    *,
-    source_platform: str | None = None,
-) -> int:
-    """Count jobs stored today, optionally limited to one source platform."""
-    clauses = ["datetime(created_at, 'localtime') >= datetime('now', 'localtime', 'start of day')"]
-    params: list[str] = []
-    if source_platform:
-        clauses.append("COALESCE(source_platform, 'boss') = ?")
-        params.append(str(source_platform))
-    row = conn.execute(
-        f"SELECT COUNT(*) AS cnt FROM jobs WHERE {' AND '.join(clauses)}",
-        params,
-    ).fetchone()
-    return int(row["cnt"] if row else 0)
-
-
 def count_platform_access_today(
     conn: sqlite3.Connection,
     *,

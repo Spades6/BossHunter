@@ -32,9 +32,7 @@ search:
 collection:
   default_order: [boss]
   auto_score_default: false
-  default_target_count: 10
-  # 以下额度只统计 BOSS 直聘；智联和 51job 的采集不占用。
-  daily_new_jobs_limit: 100       # BOSS 单日新增唯一岗位上限；重复岗位不计入
+  # 以下页面额度只统计 BOSS 直聘；智联和 51job 不占用。
   daily_search_page_limit: 30     # BOSS 单日搜索页上限
   daily_detail_page_limit: 150    # BOSS 单日详情页尝试上限
   max_consecutive_page_failures: 3
@@ -49,7 +47,6 @@ platforms:
       city_codes: {}
       max_pages: 5
       sort: newest
-      target_count: 10
   zhilian:
     enabled: false
     search:
@@ -59,7 +56,6 @@ platforms:
       city_codes: {}
       max_pages: 3
       sort: default
-      target_count: 10
   51job:
     enabled: false
     # 51job 目前只开放采集/评分/招呼语生成，真实发送和监听仍锁定。
@@ -69,7 +65,6 @@ platforms:
       city_codes: {"上海": "020000"}
       max_pages: 1
       sort: default
-      target_count: 3
 
 scoring:
   threshold: 70

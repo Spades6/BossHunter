@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import replace
 from pathlib import Path
 from threading import Event
 from typing import Any, Callable
@@ -21,7 +20,7 @@ from bosshunter.collection.platforms.job51 import Job51Collector, get_51job_city
 from bosshunter.collection.platforms.zhilian import ZhilianCollector, get_zhilian_city_code
 from bosshunter.collection.registry import CollectorRegistry
 from bosshunter.collection_run_store import create_collection_run, update_collection_run
-from bosshunter.db import count_jobs_created_today, get_db, insert_job_if_new, job_identity_exists
+from bosshunter.db import get_db, insert_job_if_new, job_identity_exists
 from bosshunter.job_filters import matching_blocked_company, matching_deal_breaker
 
 
@@ -92,7 +91,6 @@ def normalize_collection_options(config: dict[str, Any], raw_options: dict[str, 
             } if isinstance(base.get("city_codes"), dict) else {},
             "max_pages": base.get("max_pages", 3 if platform == "boss" else 1),
             "sort": str(base.get("sort") or ("newest" if platform == "boss" else "default")),
-            "target_count": base.get("target_count", 10 if platform == "boss" else 3),
         }
 
     order = supplied.get("platform_order")
@@ -178,23 +176,12 @@ def validate_collection_options(options: dict[str, Any]) -> dict[str, Any]:
         sort = str(value.get("sort") or "default").strip()
         if sort not in SORT_OPTIONS[platform]:
             raise ValueError(f"{platform} 排序方式无效")
-        target = value.get("target_count", 10)
-        if target == "" or target is False:
-            target = None
-        if target is not None:
-            try:
-                target = int(target)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"{platform} 目标新增数量必须是整数或不限") from exc
-            if not 1 <= target <= 500:
-                raise ValueError(f"{platform} 目标新增数量范围为 1-500")
         normalized["platforms"][platform] = {
             "keywords": keywords,
             "cities": cities,
             "city_codes": city_codes,
             "max_pages": max_pages,
             "sort": sort,
-            "target_count": target,
         }
     return normalized
 
@@ -222,7 +209,7 @@ class _SharedProcessor:
         self.emit = emit
         self.progress = CollectionProgress(
             run_id=run_id, platform=request.platform, platform_index=platform_index,
-            platform_total=platform_total, phase="queued", target=request.target_count,
+            platform_total=platform_total, phase="queued", target=None,
             max_pages=request.max_pages,
         )
         self.new_job_ids: list[str] = []
@@ -279,7 +266,7 @@ class _SharedProcessor:
         self.event(phase="saving")
         if self.stop_event is not None and self.stop_event.is_set():
             return False
-        return self.request.target_count is None or len(self.new_job_ids) < self.request.target_count
+        return self.stop_event is None or not self.stop_event.is_set()
 
 
 class CollectionOrchestrator:
@@ -310,7 +297,7 @@ class CollectionOrchestrator:
         options = normalize_collection_options(self.config, raw_options)
         order = options["platform_order"]
         states: dict[str, dict[str, Any]] = {
-            platform: {"status": "queued", "new": 0, "target": options["platforms"][platform]["target_count"], "percent": None}
+            platform: {"status": "queued", "new": 0, "target": None, "percent": None}
             for platform in order
         }
         create_collection_run(self.db_path, run_id=self.run_id, task_id=self.task_id, options=options, platform_states=states)
@@ -325,32 +312,6 @@ class CollectionOrchestrator:
                     break
                 raw = options["platforms"][platform]
                 request = PlatformCollectionRequest(platform=platform, **raw)
-                boss_daily_remaining: int | None = None
-                boss_requested_target = request.target_count
-                if platform == "boss":
-                    collection_cfg = self.config.get("collection", {}) if isinstance(self.config.get("collection"), dict) else {}
-                    try:
-                        daily_limit = max(int(collection_cfg.get("daily_new_jobs_limit", 100)), 1)
-                    except (TypeError, ValueError):
-                        daily_limit = 100
-                    boss_daily_remaining = max(
-                        daily_limit - count_jobs_created_today(conn, source_platform="boss"),
-                        0,
-                    )
-                    if boss_daily_remaining <= 0:
-                        result = PlatformCollectionResult(
-                            "boss", "completed_with_shortage", "daily_new_jobs_limit",
-                            "已达到 BOSS 单日新增唯一岗位上限；智联和 51job 可继续采集",
-                        )
-                        platform_results.append(result)
-                        states[platform].update({
-                            "status": result.status, "new": 0, "reason_code": result.reason_code,
-                            "message": result.message,
-                        })
-                        self._persist(states, all_new_ids, platform, stop_reason=result.reason_code)
-                        continue
-                    if request.target_count is None or request.target_count > boss_daily_remaining:
-                        request = replace(request, target_count=boss_daily_remaining)
                 states[platform]["status"] = "running"
                 self._persist(states, all_new_ids, platform)
                 processor = _SharedProcessor(
@@ -385,20 +346,6 @@ class CollectionOrchestrator:
                     result = PlatformCollectionResult(platform, "failed", "network_error", f"{platform} 采集失败", error=str(exc)[:500])
                 result.new_job_ids = list(processor.new_job_ids)
                 result.counts = self._counts(processor.progress)
-                if (
-                    platform == "boss"
-                    and boss_daily_remaining is not None
-                    and len(result.new_job_ids) >= boss_daily_remaining
-                    and (boss_requested_target is None or boss_requested_target >= boss_daily_remaining)
-                ):
-                    result.status = "completed_with_shortage"
-                    result.reason_code = "daily_new_jobs_limit"
-                    result.message = "已达到 BOSS 单日新增唯一岗位上限；智联和 51job 不占用该额度"
-                if result.status == "completed" and request.target_count is not None and len(result.new_job_ids) < request.target_count:
-                    result.status = "completed_with_shortage"
-                    if not result.reason_code or result.reason_code == "search_exhausted":
-                        result.reason_code = "max_pages_reached"
-                        result.message = "已达到最大页数或没有更多符合条件的岗位"
                 platform_results.append(result)
                 states[platform].update({
                     "status": result.status,

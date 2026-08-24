@@ -17,7 +17,6 @@ class CollectionPreflightTests(TestCase):
                     "city_codes": {},
                     "max_pages": 1,
                     "sort": "default",
-                    "target_count": 1,
                 },
             },
         }

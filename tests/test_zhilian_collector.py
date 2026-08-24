@@ -202,11 +202,11 @@ class ZhilianFixtureTests(TestCase):
             on_event=lambda **_kwargs: None,
         )
         result = ZhilianCollector(browser=browser).collect(
-            PlatformCollectionRequest("zhilian", ["AI"], ["北京"], {"北京": "530"}, max_pages=1, target_count=1),
+            PlatformCollectionRequest("zhilian", ["AI"], ["北京"], {"北京": "530"}, max_pages=1),
             hooks,
         )
 
-        self.assertEqual(result.reason_code, "target_reached")
+        self.assertEqual(result.reason_code, "callback_stopped")
         self.assertEqual(len(collected), 1)
         self.assertEqual(opened[1], "https://www.zhaopin.com/jobdetail/zl-1.htm")
 
@@ -248,7 +248,7 @@ class ZhilianFixtureTests(TestCase):
             hooks,
         )
 
-        self.assertEqual(result.reason_code, "target_reached")
+        self.assertEqual(result.reason_code, "callback_stopped")
         self.assertEqual(actions, [
             (
                 "click",
@@ -314,7 +314,7 @@ class ZhilianFixtureTests(TestCase):
             hooks,
         )
 
-        self.assertEqual(result.reason_code, "target_reached")
+        self.assertEqual(result.reason_code, "callback_stopped")
         self.assertEqual(navigated, ["https://www.zhaopin.com/sou/jl530/"])
         self.assertEqual(collected[0].storage_id, "zhilian:CC123J40800000001")
         self.assertIn("用户增长", collected[0].jd)

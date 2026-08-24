@@ -762,7 +762,7 @@ class ZhilianCollector:
                                     hooks.on_parse_failed(str(exc) or "智联侧栏详情解析失败")
                                     continue
                                 if not hooks.on_candidate(final):
-                                    return PlatformCollectionResult(self.platform, "completed", "target_reached", "已达到目标新增数量")
+                                    return PlatformCollectionResult(self.platform, "completed", "callback_stopped", "采集回调已停止")
                                 continue
                             candidate = self._candidate_from_list(raw_item, city, keyword)
                             if candidate is None or not hooks.on_list_candidate(candidate):
@@ -824,7 +824,7 @@ class ZhilianCollector:
                                 hooks.on_parse_failed(str(exc) or "智联详情解析失败")
                                 continue
                             if not hooks.on_candidate(final):
-                                return PlatformCollectionResult(self.platform, "completed", "target_reached", "已达到目标新增数量")
+                                return PlatformCollectionResult(self.platform, "completed", "callback_stopped", "采集回调已停止")
                 finally:
                     if target_id:
                         self.browser.close_tab(target_id)

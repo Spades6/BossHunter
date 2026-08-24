@@ -81,7 +81,6 @@ class ScraperBackgroundTests(unittest.TestCase):
         }
 
         with patch("bosshunter.scraper.jobs.get_db", return_value=db), \
-             patch("bosshunter.scraper.jobs.count_jobs_created_today", return_value=0), \
              patch("bosshunter.collection.platforms.boss.PlatformAccessGuard") as guard_cls, \
              patch("bosshunter.scraper.jobs.Progress", return_value=progress_context), \
              patch("bosshunter.scraper.jobs.PageThrottle") as throttle_cls, \
@@ -138,7 +137,6 @@ class ScraperBackgroundTests(unittest.TestCase):
         }
 
         with patch("bosshunter.scraper.jobs.get_db", return_value=db), \
-             patch("bosshunter.scraper.jobs.count_jobs_created_today", return_value=0), \
              patch("bosshunter.collection.platforms.boss.PlatformAccessGuard") as guard_cls, \
              patch("bosshunter.scraper.jobs.Progress", return_value=progress_context), \
              patch("bosshunter.scraper.jobs.PageThrottle") as throttle_cls, \

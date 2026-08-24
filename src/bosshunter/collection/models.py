@@ -34,7 +34,6 @@ class PlatformCollectionRequest:
     city_codes: dict[str, str]
     max_pages: int = 3
     sort: str = "default"
-    target_count: int | None = 10
 
 
 @dataclass

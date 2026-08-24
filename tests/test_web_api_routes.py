@@ -2026,7 +2026,7 @@ class WebApiRouteTests(unittest.TestCase):
         task_config = start.call_args.args[1]
         self.assertEqual(task_config["_collection_options"]["platforms"]["boss"]["keywords"], ["全局关键词"])
         self.assertEqual(task_config["_collection_options"]["platforms"]["boss"]["cities"], ["上海"])
-        self.assertEqual(task_config["_collection_options"]["platforms"]["boss"]["target_count"], 4)
+        self.assertNotIn("target_count", task_config["_collection_options"]["platforms"]["boss"])
         self.assertTrue(task_config["_collection_options"]["auto_score"])
 
     def test_full_task_rejects_collection_only_platform_from_saved_config(self):

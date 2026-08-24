@@ -266,7 +266,7 @@ class Job51Collector:
                                 return PlatformCollectionResult(self.platform, "blocked", "selector_changed", "51job 详情页结构变化，已安全停止")
                             final = self._candidate_from_detail(detail, candidate)
                             if not hooks.on_candidate(final):
-                                return PlatformCollectionResult(self.platform, "completed", "target_reached", "已达到目标新增数量")
+                                return PlatformCollectionResult(self.platform, "completed", "callback_stopped", "采集回调已停止")
                 finally:
                     self.browser.close_tab(target_id)
         return PlatformCollectionResult(self.platform, "completed", "search_exhausted", "51job 搜索结果已采集完毕")
