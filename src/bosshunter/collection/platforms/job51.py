@@ -31,6 +31,7 @@ RENDER_POLL_ATTEMPTS = 10
 # Only codes verified by the contributed implementation are bundled. Unknown
 # cities are rejected instead of guessing or reusing another platform's code.
 CITY_SNAPSHOT = (
+    {"name": "北京", "code": "010000"},
     {"name": "上海", "code": "020000"},
 )
 
@@ -38,8 +39,8 @@ CITY_SNAPSHOT = (
 def load_51job_city_snapshot() -> dict[str, Any]:
     return {
         "schema": "bosshunter.51job_cities.v1",
-        "source": "contributor_verified_snapshot",
-        "note": "当前只开放已验证的上海城市编码；其他城市需现场核验后再加入。",
+        "source": "verified_snapshot",
+        "note": "当前内置已核验的北京、上海城市编码；其他城市需核验后再加入。",
         "cities": [dict(item) for item in CITY_SNAPSHOT],
     }
 
@@ -71,7 +72,9 @@ JS_EXTRACT_LIST = r"""
         try { meta = JSON.parse((dataNode && dataNode.getAttribute('sensorsdata')) || '{}'); } catch (_) {}
         var id = String(meta.jobId || '').trim();
         var title = String(meta.jobTitle || '').replace(/^招聘/, '').trim();
-        if (!id || !title || /APP下载|访问验证/.test(title)) continue;
+        var linkNode = card.querySelector('a[href*="jobs.51job.com/"]');
+        var jobUrl = linkNode ? String(linkNode.href || '').trim() : '';
+        if (!id || !title || !/^https:\/\/jobs\.51job\.com\//.test(jobUrl) || /APP下载|访问验证/.test(title)) continue;
         var companyNode = card.querySelector('[class*="company"], [class*="cname"], [class*="comname"], .comp');
         var company = companyNode ? String(companyNode.innerText || '').trim().split('\n')[0] : '';
         var area = String(meta.jobArea || '').trim();
@@ -84,7 +87,7 @@ JS_EXTRACT_LIST = r"""
             salary: String(meta.jobSalary || '').trim(),
             city: city,
             experience: experience,
-            url: 'https://jobs.51job.com/shanghai/' + encodeURIComponent(id) + '.html'
+            url: jobUrl
         });
     }
     return JSON.stringify({status: jobs.length ? 'ready' : 'selector_changed', jobs: jobs});

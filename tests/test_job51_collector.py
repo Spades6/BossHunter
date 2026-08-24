@@ -4,18 +4,24 @@ from unittest import TestCase
 from bosshunter.collection.base import CollectorHooks
 from bosshunter.collection.models import PlatformCollectionRequest
 from bosshunter.collection.orchestrator import normalize_collection_options
-from bosshunter.collection.platforms.job51 import JS_EXTRACT_DETAIL, Job51Browser, Job51Collector, get_51job_city_code
+from bosshunter.collection.platforms.job51 import JS_EXTRACT_DETAIL, JS_EXTRACT_LIST, Job51Browser, Job51Collector, get_51job_city_code
 from bosshunter.collection.text import clean_job_description
 
 
 class Job51CollectorTests(TestCase):
+    def test_list_script_uses_each_card_real_detail_url_for_multiple_cities(self):
+        self.assertIn('a[href*="jobs.51job.com/"]', JS_EXTRACT_LIST)
+        self.assertIn("url: jobUrl", JS_EXTRACT_LIST)
+        self.assertNotIn("jobs.51job.com/shanghai/", JS_EXTRACT_LIST)
+
     def test_detail_script_targets_job_description_without_footer_noise(self):
         self.assertIn(".bmsg.job_msg.inbox > div:first-child", JS_EXTRACT_DETAIL)
         self.assertNotIn("body.slice(anchor)", JS_EXTRACT_DETAIL)
 
     def test_city_and_option_defaults_are_fail_closed(self):
+        self.assertEqual(get_51job_city_code("北京市"), "010000")
         self.assertEqual(get_51job_city_code("上海市"), "020000")
-        self.assertIsNone(get_51job_city_code("北京"))
+        self.assertIsNone(get_51job_city_code("广州"))
         options = normalize_collection_options({}, {
             "platform_order": ["51job"],
             "platforms": {"51job": {"keywords": ["AI 产品"], "cities": ["上海"]}},
@@ -24,6 +30,20 @@ class Job51CollectorTests(TestCase):
         self.assertEqual(search["city_codes"], {"上海": "020000"})
         self.assertEqual(search["max_pages"], 1)
         self.assertNotIn("target_count", search)
+
+    def test_beijing_search_uses_verified_51job_area_code(self):
+        request = PlatformCollectionRequest(
+            "51job",
+            ["AI 产品"],
+            ["北京"],
+            {"北京": "010000"},
+            max_pages=1,
+        )
+
+        url = Job51Collector.build_search_url(request, "北京", "AI 产品")
+
+        self.assertIn("jobArea=010000", url)
+        self.assertIn("keyword=AI%20%E4%BA%A7%E5%93%81", url)
 
     def test_collection_uses_platform_identity_and_rate_limit(self):
         list_payload = json.dumps({"status": "ready", "jobs": [
