@@ -96,13 +96,30 @@ JS_DETECT_COLLECTION_RISK = """
     const text = (document.body?.innerText || '').slice(0, 10000);
     const url = String(location.href || '');
     const title = String(document.title || '');
+    const hasExpectedContent = Boolean(document.querySelector(
+        '.job-card-wrap, .job-sec-text, .job-detail, .job-primary'
+    ));
     const captcha = document.querySelector(
         '.geetest_panel, .captcha, [class*="captcha"], [id*="captcha"], iframe[src*="captcha"], iframe[src*="verify"]'
     );
-    if (captcha || /captcha|security-check|\\/verify/i.test(url) || /验证码|安全验证|完成验证/.test(text)) return JSON.stringify({risk: 'captcha'});
-    if (/403|forbidden|access-denied/i.test(url) || /403|访问被拒绝|账号异常|账号受限/.test(title + text)) return JSON.stringify({risk: 'blocked'});
-    if (/操作频繁|访问频繁|请求频繁|稍后再试|频率限制/.test(text)) return JSON.stringify({risk: 'rate_limit'});
-    if (/\\/web\\/user\\/(?:login|\\?ka=header-login)/i.test(url)) return JSON.stringify({risk: 'login_required'});
+    if (captcha) return JSON.stringify({risk: 'captcha', evidence: 'captcha_element'});
+    if (/captcha|security-check|\\/verify/i.test(url)) return JSON.stringify({risk: 'captcha', evidence: 'captcha_url'});
+    if (/\\/web\\/user\\/(?:login|\\?ka=header-login)/i.test(url)) return JSON.stringify({risk: 'login_required', evidence: 'login_url'});
+    if (/(?:^|[\\/?#=_-])(?:403|forbidden|access-denied)(?:$|[\\/?#=&_-])/i.test(url)) {
+        return JSON.stringify({risk: 'blocked', evidence: 'blocked_url'});
+    }
+    if (/^(?:403(?:\\s+forbidden)?|forbidden|access denied|访问被拒绝|账号异常|账号受限)/i.test(title.trim())) {
+        return JSON.stringify({risk: 'blocked', evidence: 'blocked_title'});
+    }
+    if (!hasExpectedContent && /验证码|安全验证|完成验证/.test(text)) {
+        return JSON.stringify({risk: 'captcha', evidence: 'captcha_page'});
+    }
+    if (!hasExpectedContent && /(?:^|\\n)\\s*403(?:\\s+forbidden)?\\s*(?:\\n|$)|访问被拒绝|账号异常|账号受限/i.test(text)) {
+        return JSON.stringify({risk: 'blocked', evidence: 'blocked_page'});
+    }
+    if (!hasExpectedContent && /操作频繁|访问频繁|请求频繁|稍后再试|频率限制/.test(text)) {
+        return JSON.stringify({risk: 'rate_limit', evidence: 'rate_limit_page'});
+    }
     return JSON.stringify({risk: null});
 })()
 """
@@ -200,21 +217,21 @@ class BossCollector:
                 f"BOSS 采集已达安全上限：{reason}",
             )
 
-        def risk(kind: str) -> PlatformCollectionResult:
+        def risk(kind: str, evidence: str = "") -> PlatformCollectionResult:
             labels = {
                 "captcha": "BOSS 采集检测到验证码",
-                "blocked": "BOSS 采集检测到账号或请求拦截",
+                "blocked": "BOSS 当前采集页连续检测到请求拦截（不代表账号封禁）",
                 "rate_limit": "BOSS 采集检测到频率限制",
                 "login_required": "BOSS 登录状态已失效",
-                "consecutive_page_failures": "BOSS 采集连续页面失败达到阈值",
             }
             pause_minutes = self.randint(risk_pause_min, risk_pause_max)
             label = labels.get(kind, "BOSS 采集检测到风险")
+            evidence_note = f"；证据 {evidence}" if evidence else ""
             if self.safety_conn is not None:
                 add_risk_event(
                     self.safety_conn,
                     f"collection_{kind}",
-                    f"{label}；冷却 {pause_minutes} 分钟",
+                    f"{label}{evidence_note}；冷却 {pause_minutes} 分钟",
                 )
             if guard is not None:
                 guard.lock(kind, minutes=pause_minutes)
@@ -222,16 +239,46 @@ class BossCollector:
                 self.platform,
                 "blocked",
                 kind,
-                f"{label}；本轮已停止，冷却 {pause_minutes} 分钟后可重新开始",
+                f"{label}{evidence_note}；本轮已停止，冷却 {pause_minutes} 分钟后可重新开始",
             )
 
-        def inspect_risk(target_id: str) -> str | None:
+        def inspect_risk(target_id: str) -> dict[str, str] | None:
             raw = self.browser.evaluate(target_id, JS_DETECT_COLLECTION_RISK)
             try:
                 value = json.loads(raw) if isinstance(raw, str) else (raw or {})
             except (json.JSONDecodeError, TypeError):
                 value = {}
-            return str(value.get("risk")) if isinstance(value, dict) and value.get("risk") else None
+            if not isinstance(value, dict) or not value.get("risk"):
+                return None
+            return {
+                "kind": str(value.get("risk")),
+                "evidence": str(value.get("evidence") or "unspecified"),
+            }
+
+        def confirm_risk(target_id: str) -> dict[str, str] | None:
+            first = inspect_risk(target_id)
+            if first is None:
+                return None
+            if _wait_or_stop(hooks.stop_event, 1.0 * delay_multiplier, self.sleep):
+                return {"kind": "user_stopped", "evidence": ""}
+            second = inspect_risk(target_id)
+            if second is None or second["kind"] != first["kind"]:
+                return None
+            return second
+
+        def page_failure_stop() -> PlatformCollectionResult:
+            if self.safety_conn is not None:
+                add_risk_event(
+                    self.safety_conn,
+                    "collection_consecutive_page_failures",
+                    "BOSS 连续页面失败，本轮采集已结束；未写入账号风险锁",
+                )
+            return PlatformCollectionResult(
+                self.platform,
+                "completed_with_shortage",
+                "consecutive_page_failures",
+                "BOSS 连续页面失败，本轮采集已结束；其他平台可继续",
+            )
 
         combos: list[tuple[str, str, str]] = []
         for city in request.cities:
@@ -271,13 +318,15 @@ class BossCollector:
                         worker_target = str(opened)
                     if not opened or worker_target is None:
                         page_failures += 1
-                        if page_failures >= failure_limit: return risk("consecutive_page_failures")
+                        if page_failures >= failure_limit: return page_failure_stop()
                         continue
                     if _wait_or_stop(hooks.stop_event, 3 * delay_multiplier, self.sleep):
                         return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
                     self.browser.wait_for_load(worker_target, timeout=10)
-                    kind = inspect_risk(worker_target)
-                    if kind: return risk(kind)
+                    signal = confirm_risk(worker_target)
+                    if signal and signal["kind"] == "user_stopped":
+                        return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
+                    if signal: return risk(signal["kind"], signal["evidence"])
                     self.browser.scroll(worker_target, y=2000)
                     if _wait_or_stop(hooks.stop_event, 1.5 * delay_multiplier, self.sleep):
                         return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
@@ -289,7 +338,7 @@ class BossCollector:
                         jobs = None
                     if not isinstance(jobs, list):
                         page_failures += 1
-                        if page_failures >= failure_limit: return risk("consecutive_page_failures")
+                        if page_failures >= failure_limit: return page_failure_stop()
                         hooks.on_parse_failed("BOSS 列表解析失败")
                         continue
                     page_failures = 0
@@ -312,13 +361,15 @@ class BossCollector:
                         if not self.browser.navigate(worker_target, detail_url):
                             page_failures += 1
                             hooks.on_parse_failed("无法打开 BOSS 详情页")
-                            if page_failures >= failure_limit: return risk("consecutive_page_failures")
+                            if page_failures >= failure_limit: return page_failure_stop()
                             continue
                         if _wait_or_stop(hooks.stop_event, 2 * delay_multiplier, self.sleep):
                             return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
                         self.browser.wait_for_load(worker_target, timeout=10)
-                        kind = inspect_risk(worker_target)
-                        if kind: return risk(kind)
+                        signal = confirm_risk(worker_target)
+                        if signal and signal["kind"] == "user_stopped":
+                            return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
+                        if signal: return risk(signal["kind"], signal["evidence"])
                         detail_result = self.browser.evaluate(worker_target, JS_EXTRACT_DETAIL)
                         try:
                             detail = json.loads(detail_result) if detail_result else None
@@ -327,7 +378,7 @@ class BossCollector:
                         if not isinstance(detail, dict):
                             page_failures += 1
                             hooks.on_parse_failed("BOSS 详情解析失败")
-                            if page_failures >= failure_limit: return risk("consecutive_page_failures")
+                            if page_failures >= failure_limit: return page_failure_stop()
                             continue
                         page_failures = 0
                         merged = self._merge_detail(candidate, detail, detail_url)

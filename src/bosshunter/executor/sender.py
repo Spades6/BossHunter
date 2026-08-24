@@ -1170,11 +1170,11 @@ def send_greetings(config: dict, force: bool = False) -> int:
                 if error in ["captcha", "rate_limit", "blocked"]:
                     console.print(f"\n[red]⚠ 检测到风控信号: {error}，安全暂停[/red]")
                     add_risk_event(db, error, f"触发风控: {error}")
-                    lock_minutes = config.get("safety", {}).get("risk_lock_minutes", 1440)
+                    lock_minutes = config.get("safety", {}).get("risk_lock_minutes", 10)
                     try:
                         lock_minutes = max(int(lock_minutes), 1)
                     except (TypeError, ValueError):
-                        lock_minutes = 1440
+                        lock_minutes = 10
                     set_platform_safety_lock(db, error, minutes=lock_minutes)
                     send_report["stop_reason"] = error
                     break
@@ -1183,11 +1183,11 @@ def send_greetings(config: dict, force: bool = False) -> int:
                 if backoff.should_pause_long:
                     console.print(f"\n[red]⚠ 连续错误过多，暂停 {int(pause_duration/60)} 分钟[/red]")
                     add_risk_event(db, "backoff_pause", f"暂停{int(pause_duration)}秒")
-                    lock_minutes = config.get("safety", {}).get("risk_lock_minutes", 1440)
+                    lock_minutes = config.get("safety", {}).get("risk_lock_minutes", 10)
                     try:
                         lock_minutes = max(int(lock_minutes), 1)
                     except (TypeError, ValueError):
-                        lock_minutes = 1440
+                        lock_minutes = 10
                     set_platform_safety_lock(db, "consecutive_errors", minutes=lock_minutes)
                     send_report["stop_reason"] = "consecutive_errors"
                     break

@@ -772,7 +772,7 @@ def set_platform_safety_lock(
     conn: sqlite3.Connection,
     reason: str,
     *,
-    minutes: int = 1440,
+    minutes: int = 10,
 ) -> None:
     """Persist a temporary account-safety lock across task and process restarts."""
     locked_until = datetime.now(timezone.utc) + timedelta(minutes=max(int(minutes), 1))

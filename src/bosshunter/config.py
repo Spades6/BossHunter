@@ -176,7 +176,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "safety": {
         "daily_platform_page_limit": 500,
-        "risk_lock_minutes": 1440,
+        "risk_lock_minutes": 10,
     },
     "browser": {
         "runtime": "builtin",

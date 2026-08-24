@@ -428,7 +428,7 @@ export default function ConfigPage() {
         <SectionCard title="BOSS 直聘采集安全" sectionKey="collection" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">
             <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              以下设置只适用于 BOSS 直聘。检测到风险后本轮停止并冷却 5–10 分钟；冷却结束后可由你重新开始。
+              以下设置只适用于 BOSS 直聘。正文里孤立的“403”等词不会触发；明确风险连续确认两次后，本轮停止并冷却 5–10 分钟。
             </p>
             <div className="grid grid-cols-2 gap-4">
               <Field label="BOSS 单日搜索页上限">

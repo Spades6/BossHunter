@@ -323,11 +323,11 @@ def _record_monitor_risk(kind: str, config: dict | None = None) -> None:
     try:
         db = get_db()
         add_risk_event(db, f"monitor_{kind}", labels.get(kind, "监测检测到风险信号，已停止"))
-        raw_minutes = (config or {}).get("safety", {}).get("risk_lock_minutes", 1440)
+        raw_minutes = (config or {}).get("safety", {}).get("risk_lock_minutes", 10)
         try:
             lock_minutes = max(int(raw_minutes), 1)
         except (TypeError, ValueError):
-            lock_minutes = 1440
+            lock_minutes = 10
         set_platform_safety_lock(db, kind, minutes=lock_minutes)
     except Exception:
         # Failure to persist telemetry must never allow risky browsing to continue.

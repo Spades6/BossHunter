@@ -147,6 +147,65 @@ platforms:
         self.assertGreaterEqual(lock_call.kwargs["minutes"], 5)
         self.assertLessEqual(lock_call.kwargs["minutes"], 10)
 
+    def test_transient_collection_risk_is_ignored_without_locking(self):
+        db = Mock()
+        progress = Mock()
+        progress.add_task.return_value = "task"
+        context = Mock()
+        context.__enter__ = Mock(return_value=progress)
+        context.__exit__ = Mock(return_value=False)
+        config = {
+            "profile": {"target_cities": ["北京"]},
+            "search": {"max_pages": 1},
+        }
+
+        with patch("bosshunter.scraper.jobs.get_db", return_value=db), \
+             patch("bosshunter.collection.platforms.boss.PlatformAccessGuard") as guard_cls, \
+             patch("bosshunter.scraper.jobs.Progress", return_value=context), \
+             patch("bosshunter.scraper.jobs.new_tab", return_value="worker"), \
+             patch("bosshunter.scraper.jobs.wait_for_load"), \
+             patch(
+                 "bosshunter.scraper.jobs.evaluate",
+                 side_effect=[
+                     json.dumps({"risk": "blocked", "evidence": "blocked_page"}),
+                     json.dumps({"risk": None}),
+                     json.dumps([]),
+                 ],
+             ), \
+             patch("bosshunter.scraper.jobs.scroll"), \
+             patch("bosshunter.scraper.jobs.close_tab"), \
+             patch("bosshunter.scraper.jobs.time.sleep"):
+            count = scrape_jobs(config, ["AI"])
+
+        self.assertEqual(count, 0)
+        self.assertEqual(config["_workbench_collect_report"]["stop_reason"], "search_exhausted")
+        guard_cls.return_value.lock.assert_not_called()
+
+    def test_consecutive_page_failures_end_collection_without_risk_lock(self):
+        db = Mock()
+        progress = Mock()
+        progress.add_task.return_value = "task"
+        context = Mock()
+        context.__enter__ = Mock(return_value=progress)
+        context.__exit__ = Mock(return_value=False)
+        config = {
+            "profile": {"target_cities": ["北京"]},
+            "search": {"max_pages": 3},
+            "collection": {"max_consecutive_page_failures": 3},
+        }
+
+        with patch("bosshunter.scraper.jobs.get_db", return_value=db), \
+             patch("bosshunter.collection.platforms.boss.PlatformAccessGuard") as guard_cls, \
+             patch("bosshunter.scraper.jobs.Progress", return_value=context), \
+             patch("bosshunter.scraper.jobs.new_tab", return_value=None), \
+             patch("bosshunter.scraper.jobs.close_tab"), \
+             patch("bosshunter.scraper.jobs.time.sleep"):
+            count = scrape_jobs(config, ["AI"])
+
+        self.assertEqual(count, 0)
+        self.assertEqual(config["_workbench_collect_report"]["stop_reason"], "consecutive_page_failures")
+        guard_cls.return_value.lock.assert_not_called()
+
     def test_frontend_task_log_explains_daily_limit(self):
         task = WorkbenchTask(id="collect", mode="collect", label="单独采集")
         config = {"search": {"keywords": ["AI"]}}

@@ -56,7 +56,7 @@ class PlatformAccessGuard:
         lock_minutes = (
             _positive_int(minutes, 1)
             if minutes is not None
-            else _positive_int(safety_cfg.get("risk_lock_minutes", 1440), 1440)
+            else _positive_int(safety_cfg.get("risk_lock_minutes", 10), 10)
         )
         set_platform_safety_lock(self.conn, reason, minutes=lock_minutes)
 
