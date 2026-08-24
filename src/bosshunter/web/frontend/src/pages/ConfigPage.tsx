@@ -244,6 +244,16 @@ export default function ConfigPage() {
     )
   }
 
+  const bossSearchEstimate = platformSearch('boss')
+  const bossEstimateKeywords = Array.isArray(bossSearchEstimate.keywords) ? bossSearchEstimate.keywords : []
+  const bossEstimateCities = Array.isArray(bossSearchEstimate.cities) && bossSearchEstimate.cities.length
+    ? bossSearchEstimate.cities
+    : (config.profile?.target_cities || [])
+  const bossEstimateMaxPages = Math.max(Number(bossSearchEstimate.max_pages) || 1, 1)
+  const bossTheoreticalPages = bossEstimateKeywords.length * bossEstimateCities.length * bossEstimateMaxPages
+  const bossDailySearchLimit = Math.max(Number(config.collection?.daily_search_page_limit) || 30, 1)
+  const bossTheoreticalExceedsLimit = bossTheoreticalPages > bossDailySearchLimit
+
   return (
     <div className="h-full overflow-y-auto space-y-4 pr-4">
         {/* Actions bar */}
@@ -401,6 +411,14 @@ export default function ConfigPage() {
                         </Select>
                       </Field>
                     </div>
+                    {platform === 'boss' && bossTheoreticalPages > 0 && (
+                      <p className={`rounded-lg px-3 py-2 text-xs ${bossTheoreticalExceedsLimit ? 'bg-amber-50 font-bold text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                        理论最多 {bossTheoreticalPages} 页（{bossEstimateKeywords.length} 个关键词 × {bossEstimateCities.length} 个城市 × {bossEstimateMaxPages} 页）。
+                        {bossTheoreticalExceedsLimit
+                          ? ` 已超过每日 ${bossDailySearchLimit} 页上限，到达上限后会提示并停止 BOSS 当前轮。`
+                          : ` 未超过每日 ${bossDailySearchLimit} 页上限。`}
+                      </p>
+                    )}
                   </div>}
                 </div>
               )
@@ -433,6 +451,11 @@ export default function ConfigPage() {
             <div className="grid grid-cols-2 gap-4">
               <Field label="BOSS 单日搜索页上限">
                 <Input type="number" value={config.collection?.daily_search_page_limit ?? 30} onChange={e => updateConfig('collection.daily_search_page_limit', Number(e.target.value))} min={1} max={200} />
+                {bossTheoreticalPages > 0 && (
+                  <p className={`mt-1 text-xs ${bossTheoreticalExceedsLimit ? 'font-bold text-amber-700' : 'text-muted'}`}>
+                    当前搜索组合理论最多 {bossTheoreticalPages} 页；{bossTheoreticalExceedsLimit ? `超过本上限 ${bossDailySearchLimit} 页，会在设置处和执行时提示。` : '未超过本上限。'}
+                  </p>
+                )}
               </Field>
               <Field label="BOSS 单日详情页尝试上限">
                 <Input type="number" value={config.collection?.daily_detail_page_limit ?? 150} onChange={e => updateConfig('collection.daily_detail_page_limit', Number(e.target.value))} min={1} max={500} />
