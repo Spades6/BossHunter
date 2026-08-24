@@ -108,7 +108,7 @@ class ScraperBackgroundTests(unittest.TestCase):
             "parse_failed": 0, "save_failed": 0, "search_pages": 1,
         })
 
-    def test_search_and_detail_pages_reuse_one_visible_worker_tab(self):
+    def test_search_and_detail_pages_reuse_one_background_worker_tab(self):
         db = Mock()
         progress = Mock()
         progress.add_task.return_value = "task-1"
@@ -166,8 +166,9 @@ class ScraperBackgroundTests(unittest.TestCase):
         self.assertEqual(count, 1)
         new_tab.assert_called_once_with(
             "https://www.zhipin.com/web/geek/job?query=AI&city=101010100",
-            background=False,
+            background=True,
         )
+        throttle_cls.assert_called_once_with(delay_min=3.0, delay_max=7.5)
         navigate.assert_called_once_with(
             "worker-target",
             "https://www.zhipin.com/job_detail/background-job.html",

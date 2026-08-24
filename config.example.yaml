@@ -36,6 +36,9 @@ collection:
   daily_search_page_limit: 30     # BOSS 单日搜索页上限
   daily_detail_page_limit: 150    # BOSS 单日详情页尝试上限
   max_consecutive_page_failures: 3
+  risk_pause_min_minutes: 5       # BOSS 风险信号后随机暂停下限
+  risk_pause_max_minutes: 10      # BOSS 风险信号后随机暂停上限
+  collection_delay_multiplier: 1.5 # BOSS 采集等待时间倍数
   delivery_cooldown_minutes: 30   # BOSS 采集结束到 BOSS 投递的最短冷却
 
 platforms:

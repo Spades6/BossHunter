@@ -24,6 +24,9 @@ class CollectionSafetyTests(unittest.TestCase):
         self.assertNotIn("daily_new_jobs_limit", collection)
         self.assertEqual(collection["daily_search_page_limit"], 30)
         self.assertEqual(collection["daily_detail_page_limit"], 150)
+        self.assertEqual(collection["risk_pause_min_minutes"], 5)
+        self.assertEqual(collection["risk_pause_max_minutes"], 10)
+        self.assertEqual(collection["collection_delay_multiplier"], 1.5)
         self.assertNotIn("max_new_jobs_per_cycle", collection)
         self.assertNotIn("max_search_pages_per_cycle", collection)
 
@@ -138,7 +141,11 @@ platforms:
 
         self.assertEqual(count, 0)
         self.assertEqual(config["_workbench_collect_report"]["stop_reason"], "captcha")
-        guard_cls.return_value.lock.assert_called_once_with("captcha")
+        guard_cls.return_value.lock.assert_called_once()
+        lock_call = guard_cls.return_value.lock.call_args
+        self.assertEqual(lock_call.args, ("captcha",))
+        self.assertGreaterEqual(lock_call.kwargs["minutes"], 5)
+        self.assertLessEqual(lock_call.kwargs["minutes"], 10)
 
     def test_frontend_task_log_explains_daily_limit(self):
         task = WorkbenchTask(id="collect", mode="collect", label="单独采集")

@@ -51,10 +51,14 @@ class PlatformAccessGuard:
                 raise PlatformSafetyStop(f"daily_{action}_limit")
         add_platform_access(self.conn, self.stage, action, platform=self.platform)
 
-    def lock(self, reason: str) -> None:
+    def lock(self, reason: str, *, minutes: int | None = None) -> None:
         safety_cfg = self.config.get("safety", {})
-        minutes = _positive_int(safety_cfg.get("risk_lock_minutes", 1440), 1440)
-        set_platform_safety_lock(self.conn, reason, minutes=minutes)
+        lock_minutes = (
+            _positive_int(minutes, 1)
+            if minutes is not None
+            else _positive_int(safety_cfg.get("risk_lock_minutes", 1440), 1440)
+        )
+        set_platform_safety_lock(self.conn, reason, minutes=lock_minutes)
 
 
 @dataclass

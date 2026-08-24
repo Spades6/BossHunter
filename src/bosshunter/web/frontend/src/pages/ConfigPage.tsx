@@ -428,7 +428,7 @@ export default function ConfigPage() {
         <SectionCard title="BOSS 直聘采集安全" sectionKey="collection" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">
             <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              以下页面访问额度只适用于 BOSS 直聘；智联和 51job 不占用。
+              以下设置只适用于 BOSS 直聘。检测到风险后本轮停止并冷却 5–10 分钟；冷却结束后可由你重新开始。
             </p>
             <div className="grid grid-cols-2 gap-4">
               <Field label="BOSS 单日搜索页上限">
@@ -439,6 +439,15 @@ export default function ConfigPage() {
               </Field>
               <Field label="BOSS 连续页面失败停止阈值">
                 <Input type="number" value={config.collection?.max_consecutive_page_failures ?? 3} onChange={e => updateConfig('collection.max_consecutive_page_failures', Number(e.target.value))} min={1} max={10} />
+              </Field>
+              <Field label="BOSS 风险暂停最少分钟">
+                <Input type="number" value={config.collection?.risk_pause_min_minutes ?? 5} onChange={e => updateConfig('collection.risk_pause_min_minutes', Number(e.target.value))} min={1} max={60} />
+              </Field>
+              <Field label="BOSS 风险暂停最多分钟">
+                <Input type="number" value={config.collection?.risk_pause_max_minutes ?? 10} onChange={e => updateConfig('collection.risk_pause_max_minutes', Number(e.target.value))} min={1} max={60} />
+              </Field>
+              <Field label="BOSS 采集间隔倍数">
+                <Input type="number" value={config.collection?.collection_delay_multiplier ?? 1.5} onChange={e => updateConfig('collection.collection_delay_multiplier', Number(e.target.value))} min={1} max={5} step={0.1} />
               </Field>
             </div>
             <Field label="BOSS 采集后自动投递冷却（分钟）">

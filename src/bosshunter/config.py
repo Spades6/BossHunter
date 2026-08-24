@@ -89,6 +89,9 @@ DEFAULTS: dict[str, Any] = {
         "daily_search_page_limit": 30,
         "daily_detail_page_limit": 150,
         "max_consecutive_page_failures": 3,
+        "risk_pause_min_minutes": 5,
+        "risk_pause_max_minutes": 10,
+        "collection_delay_multiplier": 1.5,
         "delivery_cooldown_minutes": 30,
     },
     "platforms": {

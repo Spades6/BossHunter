@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -128,6 +129,13 @@ def _positive_int(value: object, default: int) -> int:
         return default
 
 
+def _bounded_float(value: object, default: float, minimum: float, maximum: float) -> float:
+    try:
+        return min(max(float(value), minimum), maximum)
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass
 class BossBrowser:
     new_tab: Callable[..., str | None] = new_tab
@@ -147,12 +155,14 @@ class BossCollector:
         browser: BossBrowser | None = None,
         throttle_factory: Callable[..., Any] = PageThrottle,
         sleep: Callable[[float], None] = time.sleep,
+        randint: Callable[[int, int], int] | None = None,
         config: dict[str, Any] | None = None,
         safety_conn: Any | None = None,
     ):
         self.browser = browser or BossBrowser()
         self.throttle_factory = throttle_factory
         self.sleep = sleep
+        self.randint = randint or random.SystemRandom().randint
         self.config = config or {}
         self.safety_conn = safety_conn
 
@@ -161,12 +171,26 @@ class BossCollector:
         return str(request.city_codes.get(city) or CITY_CODES.get(city) or "") or None
 
     def collect(self, request: PlatformCollectionRequest, hooks: CollectorHooks) -> PlatformCollectionResult:
-        throttle = self.throttle_factory(delay_min=2.0, delay_max=5.0)
         collection_cfg = self.config.get("collection", {}) if isinstance(self.config.get("collection"), dict) else {}
+        delay_multiplier = _bounded_float(
+            collection_cfg.get("collection_delay_multiplier", 1.5),
+            1.5,
+            1.0,
+            5.0,
+        )
+        throttle = self.throttle_factory(
+            delay_min=2.0 * delay_multiplier,
+            delay_max=5.0 * delay_multiplier,
+        )
         guard = PlatformAccessGuard(self.safety_conn, self.config, "collection", "boss") if self.safety_conn is not None else None
         search_limit = _positive_int(collection_cfg.get("daily_search_page_limit", 30), 30)
         detail_limit = _positive_int(collection_cfg.get("daily_detail_page_limit", 150), 150)
         failure_limit = _positive_int(collection_cfg.get("max_consecutive_page_failures", 3), 3)
+        risk_pause_min = _positive_int(collection_cfg.get("risk_pause_min_minutes", 5), 5)
+        risk_pause_max = max(
+            risk_pause_min,
+            _positive_int(collection_cfg.get("risk_pause_max_minutes", 10), 10),
+        )
         worker_target: str | None = None
         page_failures = 0
 
@@ -184,11 +208,22 @@ class BossCollector:
                 "login_required": "BOSS 登录状态已失效",
                 "consecutive_page_failures": "BOSS 采集连续页面失败达到阈值",
             }
+            pause_minutes = self.randint(risk_pause_min, risk_pause_max)
+            label = labels.get(kind, "BOSS 采集检测到风险")
             if self.safety_conn is not None:
-                add_risk_event(self.safety_conn, f"collection_{kind}", labels.get(kind, "BOSS 采集检测到风险"))
+                add_risk_event(
+                    self.safety_conn,
+                    f"collection_{kind}",
+                    f"{label}；冷却 {pause_minutes} 分钟",
+                )
             if guard is not None:
-                guard.lock(kind)
-            return PlatformCollectionResult(self.platform, "blocked", kind, labels.get(kind, "BOSS 采集已安全停止"))
+                guard.lock(kind, minutes=pause_minutes)
+            return PlatformCollectionResult(
+                self.platform,
+                "blocked",
+                kind,
+                f"{label}；本轮已停止，冷却 {pause_minutes} 分钟后可重新开始",
+            )
 
         def inspect_risk(target_id: str) -> str | None:
             raw = self.browser.evaluate(target_id, JS_DETECT_COLLECTION_RISK)
@@ -231,20 +266,20 @@ class BossCollector:
                         if guard is not None: guard.reserve("search_page", daily_limit=search_limit)
                     except PlatformSafetyStop as exc:
                         return limited(exc.reason)
-                    opened = self.browser.new_tab(search_url, background=False) if worker_target is None else self.browser.navigate(worker_target, search_url)
+                    opened = self.browser.new_tab(search_url, background=True) if worker_target is None else self.browser.navigate(worker_target, search_url)
                     if worker_target is None and opened:
                         worker_target = str(opened)
                     if not opened or worker_target is None:
                         page_failures += 1
                         if page_failures >= failure_limit: return risk("consecutive_page_failures")
                         continue
-                    if _wait_or_stop(hooks.stop_event, 3, self.sleep):
+                    if _wait_or_stop(hooks.stop_event, 3 * delay_multiplier, self.sleep):
                         return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
                     self.browser.wait_for_load(worker_target, timeout=10)
                     kind = inspect_risk(worker_target)
                     if kind: return risk(kind)
                     self.browser.scroll(worker_target, y=2000)
-                    if _wait_or_stop(hooks.stop_event, 1.5, self.sleep):
+                    if _wait_or_stop(hooks.stop_event, 1.5 * delay_multiplier, self.sleep):
                         return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
                     self.browser.scroll(worker_target, y=4000)
                     result = self.browser.evaluate(worker_target, JS_EXTRACT_LIST)
@@ -279,7 +314,7 @@ class BossCollector:
                             hooks.on_parse_failed("无法打开 BOSS 详情页")
                             if page_failures >= failure_limit: return risk("consecutive_page_failures")
                             continue
-                        if _wait_or_stop(hooks.stop_event, 2, self.sleep):
+                        if _wait_or_stop(hooks.stop_event, 2 * delay_multiplier, self.sleep):
                             return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
                         self.browser.wait_for_load(worker_target, timeout=10)
                         kind = inspect_risk(worker_target)
@@ -301,7 +336,7 @@ class BossCollector:
                             continue
                         if not hooks.on_candidate(merged):
                             return PlatformCollectionResult(self.platform, "completed", "callback_stopped", "采集回调已停止")
-                    if page < request.max_pages and _wait_or_stop(hooks.stop_event, 0.2, self.sleep):
+                    if page < request.max_pages and _wait_or_stop(hooks.stop_event, 0.2 * delay_multiplier, self.sleep):
                         return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
         finally:
             if worker_target:
