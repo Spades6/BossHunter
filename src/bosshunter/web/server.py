@@ -30,6 +30,7 @@ from bosshunter.db import (
 	JobManualSentConflictError,
 	add_history,
 	count_unresolved_monitor_items,
+	get_active_platform_safety_lock,
 	get_daily_activity,
 	get_db,
 	get_funnel_stats,
@@ -322,6 +323,7 @@ def _record_collect_progress(task: WorkbenchTask, state: dict) -> None:
 		"collect_filtered": int(state.get("filtered") or 0),
 		"collect_parse_failed": int(state.get("parse_failed") or 0),
 		"collect_save_failed": int(state.get("save_failed") or 0),
+		"collect_search_pages": int(state.get("search_pages") or 0),
 	})
 	if isinstance(state.get("progress"), dict):
 		task.progress = deepcopy(state["progress"])
@@ -354,8 +356,11 @@ def _execute_collect(task: WorkbenchTask, config: dict) -> None:
 		keywords = config.get("search", {}).get("keywords", [])
 		collected_job_ids: list[str] = []
 		scrape_jobs(collect_config, keywords, collected_job_ids=collected_job_ids)
+		collect_report = collect_config.get("_workbench_collect_report", {})
+		_stop_or_log_boss_collection_reason(task, str(collect_report.get("stop_reason") or ""))
 		if task.stop_requested.is_set():
 			return
+		task.context["boss_collection_completed_monotonic"] = time.monotonic()
 		_log(task, f"本轮采集完成：扫描 {task.metrics.get('collect_seen', 0)}，新增 {task.metrics.get('collect_new', 0)}，重复 {task.metrics.get('collect_duplicate', 0)}")
 		_log(task, f"开始 AI 评分：处理全部未评分岗位（本轮新增 {len(collected_job_ids)} 个）")
 		score_config = dict(config)
@@ -376,9 +381,38 @@ def _execute_collect(task: WorkbenchTask, config: dict) -> None:
 		"platforms": result.get("platforms", {}),
 		"collected_job_ids": result.get("collected_job_ids", []),
 	}
+	boss_state = result.get("platforms", {}).get("boss", {})
+	if isinstance(boss_state, dict):
+		_stop_or_log_boss_collection_reason(task, str(boss_state.get("reason_code") or ""))
+		if boss_state.get("status") not in {None, "queued"}:
+			task.context["boss_collection_completed_monotonic"] = time.monotonic()
 	_log(task, f"本轮采集完成：新增 {len(result.get('collected_job_ids', []))}，状态 {result.get('status', 'completed')}")
 	if task.stop_requested.is_set():
 		return
+
+
+def _stop_or_log_boss_collection_reason(task: WorkbenchTask, stop_reason: str) -> None:
+	limit_labels = {
+		"daily_new_jobs_limit": "BOSS 单日新增岗位上限",
+		"daily_search_page_limit": "BOSS 单日搜索页上限",
+		"daily_detail_page_limit": "BOSS 单日详情页上限",
+		"daily_platform_page_limit": "BOSS 单日页面访问总上限",
+		"persistent_risk_lock": "BOSS 风险冷却锁",
+	}
+	risk_labels = {
+		"captcha": "BOSS 验证码",
+		"blocked": "BOSS 账号或请求拦截",
+		"rate_limit": "BOSS 频率限制",
+		"login_required": "BOSS 登录状态失效",
+		"consecutive_page_failures": "BOSS 连续页面失败",
+	}
+	if stop_reason in limit_labels:
+		_log(task, f"为了账户安全，已达到{limit_labels[stop_reason]}，仅停止 BOSS 访问；智联和 51job 不占用该额度")
+	elif stop_reason in risk_labels:
+		reason = f"为了账户安全，检测到{risk_labels[stop_reason]}，已立即停止并进入安全冷却"
+		task.stop_reason = reason
+		task.stop_requested.set()
+		_log(task, reason)
 
 
 def _execute_rescore(task: WorkbenchTask, config: dict) -> None:
@@ -473,6 +507,8 @@ def _take_monitor_deliveries(task: WorkbenchTask) -> list[dict]:
 
 def _execute_monitor(task: WorkbenchTask, config: dict, *, initial_cooldown: bool = False) -> None:
 	from bosshunter.executor.monitor import monitor_and_send_resumes
+	if _stop_for_active_platform_lock(task):
+		return
 
 	monitor_config = dict(config)
 	monitor_config["_workbench_stop_event"] = task.stop_requested
@@ -505,6 +541,8 @@ def _execute_monitor(task: WorkbenchTask, config: dict, *, initial_cooldown: boo
 					"rate_limit": "频率限制",
 					"blocked": "账号或请求被拦截",
 					"consecutive_page_failures": "连续页面失败",
+					"daily_platform_page_limit": "单日平台页面访问上限",
+					"persistent_risk_lock": "平台安全锁冷却",
 				}
 				reason = f"监测已安全停止：检测到{reason_labels.get(stop_reason, '风险信号')}"
 				task.stop_reason = reason
@@ -589,6 +627,8 @@ def _execute_full(task: WorkbenchTask, config: dict) -> None:
 		return
 
 	_log(task, f"前端已确认 {len(job_ids)} 个岗位，继续投递")
+	if _wait_for_collection_delivery_cooldown(task, config):
+		return
 	# The user may adjust the daily limit or other send settings while reviewing
 	# jobs. Reload immediately before delivery instead of using the task-start snapshot.
 	deliver_config = load_config(CONFIG_PATH)
@@ -642,6 +682,8 @@ def _take_active_delivery(task: WorkbenchTask) -> dict | None:
 
 def _execute_deliver(task: WorkbenchTask, config: dict) -> None:
 	"""Run one delivery worker and drain batches queued while it is active."""
+	if _stop_for_active_platform_lock(task):
+		return
 	queue_lock = task.context.setdefault("delivery_queue_lock", Lock())
 	with queue_lock:
 		task.context["delivering"] = True
@@ -671,6 +713,40 @@ def _execute_deliver(task: WorkbenchTask, config: dict) -> None:
 			task.context["delivering"] = False
 			task.context.pop("delivery_scheduled_ids", None)
 			task.context.pop("pending_deliveries", None)
+
+
+def _stop_for_active_platform_lock(task: WorkbenchTask) -> bool:
+	db = _get_web_db()
+	try:
+		lock = get_active_platform_safety_lock(db)
+	finally:
+		db.close()
+	if not lock:
+		return False
+	reason = "为了账户安全，平台风险冷却尚未结束，已停止本次平台访问"
+	task.stop_reason = reason
+	task.stop_requested.set()
+	_log(task, reason)
+	return True
+
+
+def _wait_for_collection_delivery_cooldown(task: WorkbenchTask, config: dict) -> bool:
+	completed_at = task.context.get("boss_collection_completed_monotonic")
+	if not isinstance(completed_at, (int, float)):
+		return False
+	raw_minutes = config.get("collection", {}).get("delivery_cooldown_minutes", 30)
+	try:
+		cooldown_seconds = max(float(raw_minutes), 0) * 60
+	except (TypeError, ValueError):
+		cooldown_seconds = 30 * 60
+	remaining = max(cooldown_seconds - (time.monotonic() - completed_at), 0)
+	if remaining <= 0:
+		return False
+	_log(task, f"为了账户安全，BOSS 采集结束后冷却 {remaining / 60:.1f} 分钟再开始 BOSS 投递")
+	if task.stop_requested.wait(remaining):
+		_log(task, "采集到投递的安全冷却已取消")
+		return True
+	return False
 
 
 def _execute_deliver_batch(task: WorkbenchTask, config: dict) -> None:

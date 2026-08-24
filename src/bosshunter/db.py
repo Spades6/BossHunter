@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -91,16 +92,34 @@ def _init_tables(conn: sqlite3.Connection) -> None:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS platform_access_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform TEXT NOT NULL DEFAULT 'boss',
+            stage TEXT NOT NULL,
+            action TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS platform_safety_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            reason TEXT NOT NULL,
+            locked_until TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
         CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score);
         CREATE INDEX IF NOT EXISTS idx_history_job_id ON history(job_id);
         CREATE INDEX IF NOT EXISTS idx_risk_events_type ON risk_events(event_type);
+        CREATE INDEX IF NOT EXISTS idx_platform_access_stage_action
+            ON platform_access_events(stage, action, created_at);
     """)
     conn.commit()
     _migrate_v1_1(conn)
     _migrate_v1_2(conn)
     _migrate_v1_3(conn)
     _migrate_v1_4(conn)
+    _migrate_platform_access_events(conn)
     _init_scoring_runs(conn)
     _init_collection_runs(conn)
 
@@ -616,6 +635,18 @@ def _migrate_v1_4(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_platform_access_events(conn: sqlite3.Connection) -> None:
+    """Scope PR #66 access counters to a platform without losing old BOSS events."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(platform_access_events)").fetchall()}
+    if "platform" not in cols:
+        conn.execute("ALTER TABLE platform_access_events ADD COLUMN platform TEXT NOT NULL DEFAULT 'boss'")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_platform_access_platform_stage_action "
+        "ON platform_access_events(platform, stage, action, created_at)"
+    )
+    conn.commit()
+
+
 def _init_scoring_runs(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
@@ -694,6 +725,107 @@ def add_risk_event(conn: sqlite3.Connection, event_type: str, detail: str = "") 
         (event_type, detail)
     )
     conn.commit()
+
+
+def count_jobs_created_today(
+    conn: sqlite3.Connection,
+    *,
+    source_platform: str | None = None,
+) -> int:
+    """Count jobs stored today, optionally limited to one source platform."""
+    clauses = ["datetime(created_at, 'localtime') >= datetime('now', 'localtime', 'start of day')"]
+    params: list[str] = []
+    if source_platform:
+        clauses.append("COALESCE(source_platform, 'boss') = ?")
+        params.append(str(source_platform))
+    row = conn.execute(
+        f"SELECT COUNT(*) AS cnt FROM jobs WHERE {' AND '.join(clauses)}",
+        params,
+    ).fetchone()
+    return int(row["cnt"] if row else 0)
+
+
+def count_platform_access_today(
+    conn: sqlite3.Connection,
+    *,
+    platform: str = "boss",
+    stage: str | None = None,
+    action: str | None = None,
+) -> int:
+    """Count recorded platform page opens during the current local day."""
+    clauses = [
+        "datetime(created_at, 'localtime') >= datetime('now', 'localtime', 'start of day')",
+        "platform = ?",
+    ]
+    params: list[str] = [str(platform or "boss")]
+    if stage:
+        clauses.append("stage = ?")
+        params.append(stage)
+    if action:
+        clauses.append("action = ?")
+        params.append(action)
+    row = conn.execute(
+        f"SELECT COUNT(*) AS cnt FROM platform_access_events WHERE {' AND '.join(clauses)}",
+        params,
+    ).fetchone()
+    return int(row["cnt"] if row else 0)
+
+
+def add_platform_access(
+    conn: sqlite3.Connection,
+    stage: str,
+    action: str,
+    *,
+    platform: str = "boss",
+) -> None:
+    """Record one platform page-open attempt without URLs or account data."""
+    conn.execute(
+        "INSERT INTO platform_access_events (platform, stage, action) VALUES (?, ?, ?)",
+        (str(platform or "boss"), stage, action),
+    )
+    conn.commit()
+
+
+def set_platform_safety_lock(
+    conn: sqlite3.Connection,
+    reason: str,
+    *,
+    minutes: int = 1440,
+) -> None:
+    """Persist a temporary account-safety lock across task and process restarts."""
+    locked_until = datetime.now(timezone.utc) + timedelta(minutes=max(int(minutes), 1))
+    conn.execute(
+        """
+        INSERT INTO platform_safety_state (id, reason, locked_until, updated_at)
+        VALUES (1, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            reason = excluded.reason,
+            locked_until = excluded.locked_until,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (reason, locked_until.isoformat()),
+    )
+    conn.commit()
+
+
+def get_active_platform_safety_lock(conn: sqlite3.Connection) -> dict[str, str] | None:
+    """Return the active safety lock, clearing it after its cooldown expires."""
+    row = conn.execute(
+        "SELECT reason, locked_until FROM platform_safety_state WHERE id = 1"
+    ).fetchone()
+    if not row:
+        return None
+    try:
+        locked_until = datetime.fromisoformat(str(row["locked_until"]))
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        locked_until = datetime.now(timezone.utc)
+    if locked_until <= datetime.now(timezone.utc):
+        conn.execute("DELETE FROM platform_safety_state WHERE id = 1")
+        conn.commit()
+        return None
+    return {"reason": str(row["reason"]), "locked_until": locked_until.isoformat()}
 
 
 def get_funnel_stats(conn: sqlite3.Connection, *, today: bool = False) -> dict[str, int]:

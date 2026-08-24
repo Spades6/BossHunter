@@ -433,6 +433,37 @@ export default function ConfigPage() {
           </div>
         </SectionCard>
 
+        {/* BOSS Collection Safety Section */}
+        <SectionCard title="BOSS 直聘采集安全" sectionKey="collection" expanded={expandedSections} toggle={toggleSection}>
+          <div className="space-y-4">
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              以下额度只适用于 BOSS 直聘，都是单日最大值，不是采集目标。重复 BOSS 岗位不占新增额度；智联和 51job 完全不计入。
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="BOSS 单日新增唯一岗位上限">
+                <Input type="number" value={config.collection?.daily_new_jobs_limit ?? 100} onChange={e => updateConfig('collection.daily_new_jobs_limit', Number(e.target.value))} min={1} max={500} />
+              </Field>
+              <Field label="BOSS 单日搜索页上限">
+                <Input type="number" value={config.collection?.daily_search_page_limit ?? 30} onChange={e => updateConfig('collection.daily_search_page_limit', Number(e.target.value))} min={1} max={200} />
+              </Field>
+              <Field label="BOSS 单日详情页尝试上限">
+                <Input type="number" value={config.collection?.daily_detail_page_limit ?? 150} onChange={e => updateConfig('collection.daily_detail_page_limit', Number(e.target.value))} min={1} max={500} />
+              </Field>
+              <Field label="BOSS 连续页面失败停止阈值">
+                <Input type="number" value={config.collection?.max_consecutive_page_failures ?? 3} onChange={e => updateConfig('collection.max_consecutive_page_failures', Number(e.target.value))} min={1} max={10} />
+              </Field>
+            </div>
+            <Field label="BOSS 采集后自动投递冷却（分钟）">
+              <Input type="number" value={config.collection?.delivery_cooldown_minutes ?? 30} onChange={e => updateConfig('collection.delivery_cooldown_minutes', Number(e.target.value))} min={0} max={240} />
+              <p className="mt-1 text-xs text-muted">只在同一流程完成 BOSS 采集后、开始 BOSS 投递前等待；单独采集不受影响。</p>
+            </Field>
+            <Field label="BOSS 单日页面访问总上限">
+              <Input type="number" value={config.safety?.daily_platform_page_limit ?? 500} onChange={e => updateConfig('safety.daily_platform_page_limit', Number(e.target.value))} min={1} max={2000} />
+              <p className="mt-1 text-xs text-muted">只合计 BOSS 采集、自动投递和监测打开的页面；智联和 51job 不占用。</p>
+            </Field>
+          </div>
+        </SectionCard>
+
         {/* Scoring Section */}
         <SectionCard title="评分设置" sectionKey="scoring" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">

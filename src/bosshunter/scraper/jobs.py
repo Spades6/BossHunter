@@ -1,7 +1,8 @@
-"""Backward-compatible BOSS collection facade.
-New multi-platform flows use ``CollectionOrchestrator`` directly. This module
-keeps the historical ``scrape_jobs(config, keywords, limit)`` contract and
-injects its old test seams into the standalone ``BossCollector``.
+"""Backward-compatible, BOSS-only collection facade.
+
+The Web multi-platform queue uses ``CollectionOrchestrator``. This module keeps
+the historical ``scrape_jobs`` API while applying PR #66's account guardrails
+only to BOSS 直聘.
 """
 
 from __future__ import annotations
@@ -11,26 +12,25 @@ import time
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from bosshunter.browser import close_tab, evaluate, navigate, new_tab, scroll, wait_for_load
 from bosshunter.cancellation import get_stop_event
 from bosshunter.collection.base import CollectorHooks
 from bosshunter.collection.models import JobCandidate, PlatformCollectionRequest
 from bosshunter.collection.platforms.boss import BossBrowser, BossCollector, generate_boss_job_id
-from bosshunter.browser import close_tab, evaluate, new_tab, scroll, wait_for_load
 from bosshunter.config import CITY_CODES
-from bosshunter.db import get_db, insert_job, job_exists
+from bosshunter.db import count_jobs_created_today, get_db, insert_job, job_exists
 from bosshunter.job_filters import matching_blocked_company, matching_deal_breaker
+from bosshunter.platform_safety import PlatformSafetyStop
 from bosshunter.throttle import PageThrottle
 
 console = Console()
 
 
 def _generate_job_id(url: str) -> str:
-    """Retain the old private helper for integrations and tests."""
     return generate_boss_job_id(url)
 
 
 def _resolve_city_code(city: str, config: dict) -> str | None:
-    """Retain the historical custom-over-builtin BOSS city lookup helper."""
     search_config = config.get("search", {}) if isinstance(config.get("search"), dict) else {}
     custom_codes = search_config.get("city_codes") if isinstance(search_config.get("city_codes"), dict) else {}
     custom = custom_codes.get(city)
@@ -40,7 +40,14 @@ def _resolve_city_code(city: str, config: dict) -> str | None:
     return str(builtin) if builtin else None
 
 
-def _legacy_request(config: dict, keywords: list[str], limit: int | None) -> PlatformCollectionRequest:
+def _positive_int(value: object, default: int) -> int:
+    try:
+        return max(int(value), 1)
+    except (TypeError, ValueError):
+        return default
+
+
+def _legacy_request(config: dict, keywords: list[str], target: int | None) -> PlatformCollectionRequest:
     search_config = config.get("search", {}) if isinstance(config.get("search"), dict) else {}
     cities = search_config.get("cities") or config.get("profile", {}).get("target_cities", ["北京"])
     custom_codes = search_config.get("city_codes") if isinstance(search_config.get("city_codes"), dict) else {}
@@ -49,10 +56,131 @@ def _legacy_request(config: dict, keywords: list[str], limit: int | None) -> Pla
         keywords=[str(keyword).strip() for keyword in keywords if str(keyword).strip()],
         cities=[str(city).strip() for city in cities if str(city).strip()],
         city_codes={str(city): str(code) for city, code in custom_codes.items()},
-        max_pages=min(int(search_config.get("max_pages", 3) or 3), 10),
+        max_pages=min(_positive_int(search_config.get("max_pages", 3), 3), 10),
         sort=str(search_config.get("sort") or "default"),
-        target_count=limit,
+        target_count=target,
     )
+
+
+def _scrape_jobs_impl(
+    config: dict,
+    keywords: list[str],
+    limit: int | None = None,
+    *,
+    collected_job_ids: list[str] | None = None,
+) -> int:
+    """Collect BOSS jobs; Zhilian/51job never enter this facade or its quotas."""
+    db = get_db()
+    stop_event = get_stop_event(config)
+    report_state = {"stop_reason": None, "new_count": 0}
+    config["_workbench_collect_report"] = report_state
+    if stop_event is not None and stop_event.is_set():
+        db.close()
+        return 0
+
+    collection_cfg = config.get("collection", {}) if isinstance(config.get("collection"), dict) else {}
+    daily_limit = _positive_int(collection_cfg.get("daily_new_jobs_limit", 100), 100)
+    boss_created_today = count_jobs_created_today(db, source_platform="boss")
+    daily_remaining = max(daily_limit - boss_created_today, 0)
+    requested = daily_remaining if limit is None else max(int(limit), 0)
+    effective_target = min(requested, daily_remaining)
+    if effective_target <= 0:
+        report_state["stop_reason"] = "daily_new_jobs_limit"
+        console.print(f"[yellow]今日已达到 BOSS 新增岗位上限 ({daily_limit})[/yellow]")
+        db.close()
+        return 0
+
+    request = _legacy_request(config, keywords, effective_target)
+    counts = {
+        "seen": 0, "new": 0, "duplicate": 0, "filtered": 0,
+        "parse_failed": 0, "save_failed": 0, "search_pages": 0,
+    }
+    progress_callback = config.get("_workbench_collect_progress")
+    profile = config.get("profile", {}) if isinstance(config.get("profile"), dict) else {}
+
+    def emit() -> None:
+        if callable(progress_callback):
+            progress_callback(dict(counts))
+
+    def inspect(candidate: JobCandidate) -> bool:
+        counts["seen"] += 1
+        if job_exists(db, candidate.storage_id):
+            counts["duplicate"] += 1
+            emit()
+            return False
+        if matching_deal_breaker(candidate.title, profile.get("deal_breakers", [])):
+            counts["filtered"] += 1
+            emit()
+            return False
+        if matching_blocked_company(candidate.company, profile.get("blocked_companies", [])):
+            counts["filtered"] += 1
+            emit()
+            return False
+        emit()
+        return True
+
+    def save(candidate: JobCandidate) -> bool:
+        if matching_deal_breaker(candidate.jd, profile.get("jd_deal_breakers", [])):
+            counts["filtered"] += 1
+            emit()
+            return True
+        try:
+            inserted = insert_job(db, candidate.as_job_record())
+        except Exception:
+            counts["save_failed"] += 1
+            emit()
+            return True
+        if inserted is False:
+            counts["duplicate"] += 1
+        else:
+            counts["new"] += 1
+            report_state["new_count"] = counts["new"]
+            if collected_job_ids is not None:
+                collected_job_ids.append(candidate.storage_id)
+        emit()
+        return bool((stop_event is None or not stop_event.is_set()) and counts["new"] < effective_target)
+
+    def parse_failed(_reason: str) -> None:
+        counts["parse_failed"] += 1
+        emit()
+
+    def event(**values) -> None:
+        if values.get("phase") == "loading_list":
+            counts["search_pages"] += 1
+        if values.get("message") == "BOSS 列表预筛不通过":
+            counts["filtered"] += 1
+        emit()
+
+    collector = BossCollector(
+        browser=BossBrowser(
+            new_tab=new_tab, close_tab=close_tab, evaluate=evaluate,
+            navigate=navigate, scroll=scroll, wait_for_load=wait_for_load,
+        ),
+        throttle_factory=PageThrottle,
+        sleep=time.sleep,
+        config=config,
+        safety_conn=db,
+    )
+    try:
+        result = collector.collect(
+            request,
+            CollectorHooks(
+                stop_event=stop_event,
+                on_list_candidate=inspect,
+                on_candidate=save,
+                on_parse_failed=parse_failed,
+                on_event=event,
+            ),
+        )
+        if result.reason_code:
+            report_state["stop_reason"] = result.reason_code
+        if counts["new"] >= daily_remaining and daily_remaining <= requested:
+            report_state["stop_reason"] = "daily_new_jobs_limit"
+        report_state.update({f"{key}_count": value for key, value in counts.items()})
+        emit()
+        return counts["new"]
+    finally:
+        db.close()
 
 
 def scrape_jobs(
@@ -62,80 +190,10 @@ def scrape_jobs(
     *,
     collected_job_ids: list[str] | None = None,
 ) -> int:
-    """Collect BOSS jobs using the new adapter while preserving the old API."""
-    db = get_db()
-    stop_event = get_stop_event(config)
-    request = _legacy_request(config, keywords, limit)
-    counts = {"seen": 0, "new": 0, "duplicate": 0, "filtered": 0, "parse_failed": 0, "save_failed": 0}
-    progress_callback = config.get("_workbench_collect_progress")
-    profile = config.get("profile", {}) if isinstance(config.get("profile"), dict) else {}
-
-    def report() -> None:
-        # The old callback shape is intentionally preserved for CLI callers and
-        # pre-existing dashboard tests. Structured progress is emitted by the
-        # orchestrator path.
-        if callable(progress_callback):
-            progress_callback({
-                "seen": counts["seen"],
-                "new": counts["new"],
-                "duplicate": counts["duplicate"],
-            })
-
-    def inspect(candidate: JobCandidate) -> bool:
-        counts["seen"] += 1
-        report()
-        if job_exists(db, candidate.storage_id):
-            counts["duplicate"] += 1
-            report()
-            return False
-        if matching_deal_breaker(candidate.title, profile.get("deal_breakers", [])):
-            counts["filtered"] += 1
-            return False
-        if matching_blocked_company(candidate.company, profile.get("blocked_companies", [])):
-            counts["filtered"] += 1
-            return False
-        return True
-
-    def save(candidate: JobCandidate) -> bool:
-        if matching_deal_breaker(candidate.jd, profile.get("jd_deal_breakers", [])):
-            counts["filtered"] += 1
-            return True
-        inserted = insert_job(db, candidate.as_job_record())
-        # Legacy test doubles historically returned None; only an explicit
-        # False means the database rejected the insert.
-        if inserted is False:
-            counts["duplicate"] += 1
-        else:
-            counts["new"] += 1
-            if collected_job_ids is not None:
-                collected_job_ids.append(candidate.storage_id)
-        report()
-        return stop_event is None or (not stop_event.is_set() and (limit is None or counts["new"] < limit))
-
-    def parse_failed(_reason: str) -> None:
-        counts["parse_failed"] += 1
-
-    hooks = CollectorHooks(
-        stop_event=stop_event,
-        on_list_candidate=inspect,
-        on_candidate=save,
-        on_parse_failed=parse_failed,
-        on_event=lambda **_values: None,
-    )
-    collector = BossCollector(
-        browser=BossBrowser(
-            new_tab=new_tab,
-            close_tab=close_tab,
-            evaluate=evaluate,
-            scroll=scroll,
-            wait_for_load=wait_for_load,
-        ),
-        throttle_factory=PageThrottle,
-        sleep=time.sleep,
-    )
     try:
-        collector.collect(request, hooks)
-        report()
-        return counts["new"]
-    finally:
-        db.close()
+        return _scrape_jobs_impl(config, keywords, limit, collected_job_ids=collected_job_ids)
+    except PlatformSafetyStop as exc:
+        report = config.setdefault("_workbench_collect_report", {})
+        report["stop_reason"] = exc.reason
+        console.print(f"[yellow]BOSS 采集已安全停止：{exc.reason}[/yellow]")
+        return int(report.get("new_count") or 0)

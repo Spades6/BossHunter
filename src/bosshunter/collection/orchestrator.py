@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from threading import Event
 from typing import Any, Callable
@@ -20,7 +21,7 @@ from bosshunter.collection.platforms.job51 import Job51Collector, get_51job_city
 from bosshunter.collection.platforms.zhilian import ZhilianCollector, get_zhilian_city_code
 from bosshunter.collection.registry import CollectorRegistry
 from bosshunter.collection_run_store import create_collection_run, update_collection_run
-from bosshunter.db import get_db, insert_job_if_new, job_identity_exists
+from bosshunter.db import count_jobs_created_today, get_db, insert_job_if_new, job_identity_exists
 from bosshunter.job_filters import matching_blocked_company, matching_deal_breaker
 
 
@@ -229,6 +230,8 @@ class _SharedProcessor:
     def event(self, *, phase: str | None = None, **values: Any) -> None:
         if phase:
             self.progress.phase = phase
+        if values.pop("increment_filtered", False):
+            self.progress.filtered += 1
         for key, value in values.items():
             if hasattr(self.progress, key):
                 setattr(self.progress, key, value)
@@ -293,6 +296,7 @@ class CollectionOrchestrator:
     ):
         self.config = config
         self.db_path = db_path or Path("./data/bosshunter.db")
+        self._uses_default_registry = registry is None
         self.registry = registry or CollectorRegistry({
             "boss": BossCollector,
             "zhilian": ZhilianCollector,
@@ -321,6 +325,32 @@ class CollectionOrchestrator:
                     break
                 raw = options["platforms"][platform]
                 request = PlatformCollectionRequest(platform=platform, **raw)
+                boss_daily_remaining: int | None = None
+                boss_requested_target = request.target_count
+                if platform == "boss":
+                    collection_cfg = self.config.get("collection", {}) if isinstance(self.config.get("collection"), dict) else {}
+                    try:
+                        daily_limit = max(int(collection_cfg.get("daily_new_jobs_limit", 100)), 1)
+                    except (TypeError, ValueError):
+                        daily_limit = 100
+                    boss_daily_remaining = max(
+                        daily_limit - count_jobs_created_today(conn, source_platform="boss"),
+                        0,
+                    )
+                    if boss_daily_remaining <= 0:
+                        result = PlatformCollectionResult(
+                            "boss", "completed_with_shortage", "daily_new_jobs_limit",
+                            "已达到 BOSS 单日新增唯一岗位上限；智联和 51job 可继续采集",
+                        )
+                        platform_results.append(result)
+                        states[platform].update({
+                            "status": result.status, "new": 0, "reason_code": result.reason_code,
+                            "message": result.message,
+                        })
+                        self._persist(states, all_new_ids, platform, stop_reason=result.reason_code)
+                        continue
+                    if request.target_count is None or request.target_count > boss_daily_remaining:
+                        request = replace(request, target_count=boss_daily_remaining)
                 states[platform]["status"] = "running"
                 self._persist(states, all_new_ids, platform)
                 processor = _SharedProcessor(
@@ -343,13 +373,27 @@ class CollectionOrchestrator:
                     on_event=lambda p=processor, **kwargs: p.event(**kwargs),
                 )
                 try:
-                    result = self.registry.get(platform).collect(request, hooks)
+                    collector = (
+                        BossCollector(config=self.config, safety_conn=conn)
+                        if platform == "boss" and self._uses_default_registry
+                        else self.registry.get(platform)
+                    )
+                    result = collector.collect(request, hooks)
                 except CollectionError as exc:
                     result = PlatformCollectionResult(platform, "blocked", exc.code, exc.message, error=str(exc))
                 except Exception as exc:
                     result = PlatformCollectionResult(platform, "failed", "network_error", f"{platform} 采集失败", error=str(exc)[:500])
                 result.new_job_ids = list(processor.new_job_ids)
                 result.counts = self._counts(processor.progress)
+                if (
+                    platform == "boss"
+                    and boss_daily_remaining is not None
+                    and len(result.new_job_ids) >= boss_daily_remaining
+                    and (boss_requested_target is None or boss_requested_target >= boss_daily_remaining)
+                ):
+                    result.status = "completed_with_shortage"
+                    result.reason_code = "daily_new_jobs_limit"
+                    result.message = "已达到 BOSS 单日新增唯一岗位上限；智联和 51job 不占用该额度"
                 if result.status == "completed" and request.target_count is not None and len(result.new_job_ids) < request.target_count:
                     result.status = "completed_with_shortage"
                     if not result.reason_code or result.reason_code == "search_exhausted":

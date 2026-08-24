@@ -88,6 +88,11 @@ DEFAULTS: dict[str, Any] = {
         "default_order": ["boss"],
         "auto_score_default": False,
         "default_target_count": 10,
+        "daily_new_jobs_limit": 100,
+        "daily_search_page_limit": 30,
+        "daily_detail_page_limit": 150,
+        "max_consecutive_page_failures": 3,
+        "delivery_cooldown_minutes": 30,
     },
     "platforms": {
         "boss": {
@@ -171,6 +176,10 @@ DEFAULTS: dict[str, Any] = {
     },
     "dedup": {
         "history_file": "./data/history.jsonl",
+    },
+    "safety": {
+        "daily_platform_page_limit": 500,
+        "risk_lock_minutes": 1440,
     },
     "browser": {
         "runtime": "builtin",

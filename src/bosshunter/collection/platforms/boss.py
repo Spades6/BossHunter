@@ -10,10 +10,13 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import quote
 
-from bosshunter.browser import close_tab, evaluate, new_tab, scroll, wait_for_load
+from bosshunter.ai.prefilter import quick_score
+from bosshunter.browser import close_tab, evaluate, navigate, new_tab, scroll, wait_for_load
 from bosshunter.collection.base import CollectionError, CollectorHooks
 from bosshunter.collection.models import JobCandidate, PlatformCollectionRequest, PlatformCollectionResult
 from bosshunter.config import CITY_CODES
+from bosshunter.db import add_risk_event
+from bosshunter.platform_safety import PlatformAccessGuard, PlatformSafetyStop
 from bosshunter.throttle import PageThrottle
 
 
@@ -87,6 +90,22 @@ JS_EXTRACT_DETAIL = """
 })()
 """
 
+JS_DETECT_COLLECTION_RISK = """
+(() => {
+    const text = (document.body?.innerText || '').slice(0, 10000);
+    const url = String(location.href || '');
+    const title = String(document.title || '');
+    const captcha = document.querySelector(
+        '.geetest_panel, .captcha, [class*="captcha"], [id*="captcha"], iframe[src*="captcha"], iframe[src*="verify"]'
+    );
+    if (captcha || /captcha|security-check|\\/verify/i.test(url) || /验证码|安全验证|完成验证/.test(text)) return JSON.stringify({risk: 'captcha'});
+    if (/403|forbidden|access-denied/i.test(url) || /403|访问被拒绝|账号异常|账号受限/.test(title + text)) return JSON.stringify({risk: 'blocked'});
+    if (/操作频繁|访问频繁|请求频繁|稍后再试|频率限制/.test(text)) return JSON.stringify({risk: 'rate_limit'});
+    if (/\\/web\\/user\\/(?:login|\\?ka=header-login)/i.test(url)) return JSON.stringify({risk: 'login_required'});
+    return JSON.stringify({risk: null});
+})()
+"""
+
 
 def generate_boss_job_id(url: str) -> str:
     match = re.search(r"/job_detail/([^.]+)", str(url or ""))
@@ -102,11 +121,19 @@ def _wait_or_stop(stop_event, seconds: float, sleep: Callable[[float], None] = t
     return False
 
 
+def _positive_int(value: object, default: int) -> int:
+    try:
+        return max(int(value), 1)
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass
 class BossBrowser:
     new_tab: Callable[..., str | None] = new_tab
     close_tab: Callable[[str], bool] = close_tab
     evaluate: Callable[..., Any] = evaluate
+    navigate: Callable[..., bool] = navigate
     scroll: Callable[..., bool] = scroll
     wait_for_load: Callable[..., bool] = wait_for_load
 
@@ -120,10 +147,14 @@ class BossCollector:
         browser: BossBrowser | None = None,
         throttle_factory: Callable[..., Any] = PageThrottle,
         sleep: Callable[[float], None] = time.sleep,
+        config: dict[str, Any] | None = None,
+        safety_conn: Any | None = None,
     ):
         self.browser = browser or BossBrowser()
         self.throttle_factory = throttle_factory
         self.sleep = sleep
+        self.config = config or {}
+        self.safety_conn = safety_conn
 
     @staticmethod
     def resolve_city_code(city: str, request: PlatformCollectionRequest) -> str | None:
@@ -131,6 +162,42 @@ class BossCollector:
 
     def collect(self, request: PlatformCollectionRequest, hooks: CollectorHooks) -> PlatformCollectionResult:
         throttle = self.throttle_factory(delay_min=2.0, delay_max=5.0)
+        collection_cfg = self.config.get("collection", {}) if isinstance(self.config.get("collection"), dict) else {}
+        guard = PlatformAccessGuard(self.safety_conn, self.config, "collection", "boss") if self.safety_conn is not None else None
+        search_limit = _positive_int(collection_cfg.get("daily_search_page_limit", 30), 30)
+        detail_limit = _positive_int(collection_cfg.get("daily_detail_page_limit", 150), 150)
+        failure_limit = _positive_int(collection_cfg.get("max_consecutive_page_failures", 3), 3)
+        worker_target: str | None = None
+        page_failures = 0
+
+        def limited(reason: str) -> PlatformCollectionResult:
+            return PlatformCollectionResult(
+                self.platform, "completed_with_shortage", reason,
+                f"BOSS 采集已达安全上限：{reason}",
+            )
+
+        def risk(kind: str) -> PlatformCollectionResult:
+            labels = {
+                "captcha": "BOSS 采集检测到验证码",
+                "blocked": "BOSS 采集检测到账号或请求拦截",
+                "rate_limit": "BOSS 采集检测到频率限制",
+                "login_required": "BOSS 登录状态已失效",
+                "consecutive_page_failures": "BOSS 采集连续页面失败达到阈值",
+            }
+            if self.safety_conn is not None:
+                add_risk_event(self.safety_conn, f"collection_{kind}", labels.get(kind, "BOSS 采集检测到风险"))
+            if guard is not None:
+                guard.lock(kind)
+            return PlatformCollectionResult(self.platform, "blocked", kind, labels.get(kind, "BOSS 采集已安全停止"))
+
+        def inspect_risk(target_id: str) -> str | None:
+            raw = self.browser.evaluate(target_id, JS_DETECT_COLLECTION_RISK)
+            try:
+                value = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except (json.JSONDecodeError, TypeError):
+                value = {}
+            return str(value.get("risk")) if isinstance(value, dict) and value.get("risk") else None
+
         combos: list[tuple[str, str, str]] = []
         for city in request.cities:
             city_code = self.resolve_city_code(city, request)
@@ -143,80 +210,102 @@ class BossCollector:
             return PlatformCollectionResult(
                 self.platform, "completed_with_shortage", "no_valid_city", "没有有效的 BOSS 搜索组合"
             )
+        if guard is not None:
+            try:
+                guard.ensure_unlocked()
+            except PlatformSafetyStop as exc:
+                return limited(exc.reason)
 
-        for city, city_code, keyword in combos:
-            if hooks.stop_event is not None and hooks.stop_event.is_set():
-                return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
-            for page in range(1, request.max_pages + 1):
+        try:
+            for city, city_code, keyword in combos:
                 if hooks.stop_event is not None and hooks.stop_event.is_set():
                     return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
-                hooks.on_event(phase="loading_list", keyword=keyword, city=city, page=page)
-                search_url = SEARCH_URL.format(keyword=quote(keyword), city_code=city_code)
-                if request.sort == "newest":
-                    search_url += "&sortType=2"
-                if page > 1:
-                    search_url += f"&page={page}"
-                target_id = self.browser.new_tab(search_url, background=True)
-                if not target_id:
-                    return PlatformCollectionResult(self.platform, "failed", "browser_disconnected", "无法打开 BOSS 搜索页")
-                try:
-                    if _wait_or_stop(hooks.stop_event, 3, self.sleep):
-                        return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
-                    self.browser.wait_for_load(target_id, timeout=10)
-                    self.browser.scroll(target_id, y=2000)
-                    if _wait_or_stop(hooks.stop_event, 1.5, self.sleep):
-                        return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
-                    self.browser.scroll(target_id, y=4000)
-                    result = self.browser.evaluate(target_id, JS_EXTRACT_LIST)
-                finally:
-                    self.browser.close_tab(target_id)
-                try:
-                    jobs = json.loads(result) if result else []
-                except (json.JSONDecodeError, TypeError):
-                    return PlatformCollectionResult(self.platform, "blocked", "selector_changed", "BOSS 列表解析失败，可能是页面结构变化")
-                if not jobs:
-                    break
-                for raw in jobs:
+                for page in range(1, request.max_pages + 1):
                     if hooks.stop_event is not None and hooks.stop_event.is_set():
                         return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
-                    candidate = self._list_candidate(raw, city, city_code, keyword)
-                    if not candidate or not hooks.on_list_candidate(candidate):
-                        continue
-                    if throttle.wait(hooks.stop_event):
-                        return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
-                    detail_url = f"https://www.zhipin.com{candidate.url}"
-                    detail_target = self.browser.new_tab(detail_url, background=True)
-                    if not detail_target:
-                        hooks.on_parse_failed("无法打开 BOSS 详情页")
-                        continue
+                    hooks.on_event(phase="loading_list", keyword=keyword, city=city, page=page)
+                    search_url = SEARCH_URL.format(keyword=quote(keyword), city_code=city_code)
+                    if request.sort == "newest": search_url += "&sortType=2"
+                    if page > 1: search_url += f"&page={page}"
                     try:
+                        if guard is not None: guard.reserve("search_page", daily_limit=search_limit)
+                    except PlatformSafetyStop as exc:
+                        return limited(exc.reason)
+                    opened = self.browser.new_tab(search_url, background=False) if worker_target is None else self.browser.navigate(worker_target, search_url)
+                    if worker_target is None and opened:
+                        worker_target = str(opened)
+                    if not opened or worker_target is None:
+                        page_failures += 1
+                        if page_failures >= failure_limit: return risk("consecutive_page_failures")
+                        continue
+                    if _wait_or_stop(hooks.stop_event, 3, self.sleep):
+                        return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
+                    self.browser.wait_for_load(worker_target, timeout=10)
+                    kind = inspect_risk(worker_target)
+                    if kind: return risk(kind)
+                    self.browser.scroll(worker_target, y=2000)
+                    if _wait_or_stop(hooks.stop_event, 1.5, self.sleep):
+                        return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
+                    self.browser.scroll(worker_target, y=4000)
+                    result = self.browser.evaluate(worker_target, JS_EXTRACT_LIST)
+                    try:
+                        jobs = json.loads(result) if result else []
+                    except (json.JSONDecodeError, TypeError):
+                        jobs = None
+                    if not isinstance(jobs, list):
+                        page_failures += 1
+                        if page_failures >= failure_limit: return risk("consecutive_page_failures")
+                        hooks.on_parse_failed("BOSS 列表解析失败")
+                        continue
+                    page_failures = 0
+                    if not jobs: break
+                    for raw in jobs:
+                        if hooks.stop_event is not None and hooks.stop_event.is_set():
+                            return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
+                        candidate = self._list_candidate(raw, city, city_code, keyword)
+                        if not candidate or not hooks.on_list_candidate(candidate): continue
+                        if self.config and quick_score(raw if isinstance(raw, dict) else {}, self.config)[0] <= 0:
+                            hooks.on_event(message="BOSS 列表预筛不通过", increment_filtered=True)
+                            continue
+                        if throttle.wait(hooks.stop_event):
+                            return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
+                        detail_url = f"https://www.zhipin.com{candidate.url}"
+                        try:
+                            if guard is not None: guard.reserve("detail_page", daily_limit=detail_limit)
+                        except PlatformSafetyStop as exc:
+                            return limited(exc.reason)
+                        if not self.browser.navigate(worker_target, detail_url):
+                            page_failures += 1
+                            hooks.on_parse_failed("无法打开 BOSS 详情页")
+                            if page_failures >= failure_limit: return risk("consecutive_page_failures")
+                            continue
                         if _wait_or_stop(hooks.stop_event, 2, self.sleep):
                             return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
-                        self.browser.wait_for_load(detail_target, timeout=10)
-                        detail_result = self.browser.evaluate(detail_target, JS_EXTRACT_DETAIL)
-                    finally:
-                        self.browser.close_tab(detail_target)
-                    try:
-                        detail = json.loads(detail_result) if detail_result else None
-                    except (json.JSONDecodeError, TypeError):
-                        detail = None
-                    if not isinstance(detail, dict):
-                        hooks.on_parse_failed("BOSS 详情解析失败")
-                        continue
-                    merged = self._merge_detail(candidate, detail, detail_url)
-                    if not merged.title or not merged.company or not merged.url or not merged.jd:
-                        hooks.on_parse_failed("BOSS 详情缺少职位、公司、链接或 JD")
-                        continue
-                    if not hooks.on_candidate(merged):
-                        return PlatformCollectionResult(self.platform, "completed", "target_reached", "已达到目标新增数量")
-                else:
-                    if page < request.max_pages and not (hooks.stop_event and hooks.stop_event.is_set()):
-                        if _wait_or_stop(hooks.stop_event, 0.2, self.sleep):
-                            return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
-                    continue
-                if hooks.stop_event is not None and hooks.stop_event.is_set():
-                    return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
-                break
+                        self.browser.wait_for_load(worker_target, timeout=10)
+                        kind = inspect_risk(worker_target)
+                        if kind: return risk(kind)
+                        detail_result = self.browser.evaluate(worker_target, JS_EXTRACT_DETAIL)
+                        try:
+                            detail = json.loads(detail_result) if detail_result else None
+                        except (json.JSONDecodeError, TypeError):
+                            detail = None
+                        if not isinstance(detail, dict):
+                            page_failures += 1
+                            hooks.on_parse_failed("BOSS 详情解析失败")
+                            if page_failures >= failure_limit: return risk("consecutive_page_failures")
+                            continue
+                        page_failures = 0
+                        merged = self._merge_detail(candidate, detail, detail_url)
+                        if not merged.title or not merged.company or not merged.url or not merged.jd:
+                            hooks.on_parse_failed("BOSS 详情缺少职位、公司、链接或 JD")
+                            continue
+                        if not hooks.on_candidate(merged):
+                            return PlatformCollectionResult(self.platform, "completed", "target_reached", "已达到目标新增数量")
+                    if page < request.max_pages and _wait_or_stop(hooks.stop_event, 0.2, self.sleep):
+                        return PlatformCollectionResult(self.platform, "stopped", "user_stopped", "用户已停止")
+        finally:
+            if worker_target:
+                self.browser.close_tab(worker_target)
         if request.target_count is not None:
             # The shared callback stops the adapter exactly at target_count.
             return PlatformCollectionResult(self.platform, "completed_with_shortage", "max_pages_reached", "已达到最大页数，新增岗位不足目标")

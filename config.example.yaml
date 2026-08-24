@@ -33,6 +33,12 @@ collection:
   default_order: [boss]
   auto_score_default: false
   default_target_count: 10
+  # 以下额度只统计 BOSS 直聘；智联和 51job 的采集不占用。
+  daily_new_jobs_limit: 100       # BOSS 单日新增唯一岗位上限；重复岗位不计入
+  daily_search_page_limit: 30     # BOSS 单日搜索页上限
+  daily_detail_page_limit: 150    # BOSS 单日详情页尝试上限
+  max_consecutive_page_failures: 3
+  delivery_cooldown_minutes: 30   # BOSS 采集结束到 BOSS 投递的最短冷却
 
 platforms:
   boss:
@@ -123,6 +129,10 @@ follow_up:
 
 dedup:
   history_file: "./data/history.jsonl"
+
+safety:
+  daily_platform_page_limit: 500  # 仅 BOSS：采集、投递和监测合计的页面打开硬上限
+  risk_lock_minutes: 1440         # 仅 BOSS：风险信号触发后跨重启保持冷却
 
 browser:
   runtime: "builtin"

@@ -63,6 +63,31 @@ class _FakeCollector:
 
 
 class CollectionOrchestratorTests(TestCase):
+    def test_boss_daily_cap_skips_only_boss_and_continues_external_collection(self):
+        events = []
+        registry = CollectorRegistry({
+            "boss": lambda: _FakeCollector("boss", events, [_candidate("boss", "should-not-open")]),
+            "zhilian": lambda: _FakeCollector("zhilian", events, [_candidate("zhilian", "external-new")]),
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "collection.db"
+            db = get_db(db_path)
+            try:
+                insert_job(db, _candidate("boss", "already-counted").as_job_record())
+            finally:
+                db.close()
+            result = CollectionOrchestrator(
+                {"collection": {"daily_new_jobs_limit": 1}},
+                db_path=db_path,
+                registry=registry,
+            ).run(_options(order=["boss", "zhilian"], target=1))
+
+        self.assertNotIn("start:boss", events)
+        self.assertIn("start:zhilian", events)
+        self.assertEqual(result["platforms"]["boss"]["reason_code"], "daily_new_jobs_limit")
+        self.assertEqual(result["platforms"]["zhilian"]["new"], 1)
+        self.assertEqual(result["collected_job_ids"], ["zhilian:external-new"])
+
     def test_two_platforms_are_strictly_serial_and_target_counts_only_new_rows(self):
         events = []
         boss_candidates = [
