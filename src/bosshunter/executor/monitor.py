@@ -28,6 +28,42 @@ console = Console()
 
 PORTFOLIO_URL = None  # Set via config: profile.portfolio_url
 
+
+def get_boss_operation_interval_multiplier(config: dict) -> float:
+    """Return the bounded BOSS page-operation interval multiplier."""
+    raw_value = config.get("collection", {}).get("collection_delay_multiplier", 1.5)
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        value = 1.5
+    return min(max(value, 1.0), 5.0)
+
+
+def _positive_interval_seconds(value: object, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(parsed, 1.0)
+
+
+def get_effective_monitor_interval_minutes(
+    config: dict,
+    base_interval_minutes: float | int | None = None,
+) -> float:
+    """Apply the BOSS operation multiplier to the wait between monitor cycles."""
+    raw_interval = (
+        base_interval_minutes
+        if base_interval_minutes is not None
+        else config.get("monitor", {}).get("interval", 30)
+    )
+    try:
+        interval = float(raw_interval)
+    except (TypeError, ValueError):
+        interval = 30.0
+    return max(interval, 1.0) * get_boss_operation_interval_multiplier(config)
+
+
 # JS: Extract chat list with full message context
 JS_EXTRACT_CHAT_LIST = r"""
 (() => {
@@ -1713,9 +1749,10 @@ def monitor_and_send_resumes(config: dict) -> dict:
         console.print("[yellow]当前不在工作时间窗口内 (09:00-16:00)[/yellow]")
         return {"skipped": 0, "replied": 0, "needs_resume": 0, "rejected": 0, "failed": 0}
 
+    operation_multiplier = get_boss_operation_interval_multiplier(config)
     throttle = RequestThrottle(
-        throttle_config.get("interval_min", 60),
-        throttle_config.get("interval_max", 180),
+        _positive_interval_seconds(throttle_config.get("interval_min"), 60) * operation_multiplier,
+        _positive_interval_seconds(throttle_config.get("interval_max"), 180) * operation_multiplier,
     )
     monitor_config = dict(config)
     monitor_config["_monitor_request_throttle"] = throttle

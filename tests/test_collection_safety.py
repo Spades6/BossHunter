@@ -227,9 +227,32 @@ platforms:
         self.assertTrue(
             _wait_for_collection_delivery_cooldown(
                 task,
-                {"collection": {"delivery_cooldown_minutes": 30}},
+                {
+                    "collection": {
+                        "delivery_cooldown_min_minutes": 5,
+                        "delivery_cooldown_max_minutes": 15,
+                    }
+                },
             )
         )
+
+    def test_collection_delivery_cooldown_selects_one_random_value_per_flow(self):
+        task = WorkbenchTask(id="full", mode="full", label="运行全流程")
+        task.context["boss_collection_completed_monotonic"] = time.monotonic()
+        task.stop_requested.set()
+        config = {
+            "collection": {
+                "delivery_cooldown_min_minutes": 5,
+                "delivery_cooldown_max_minutes": 15,
+            }
+        }
+
+        with patch("bosshunter.web.server.random.uniform", return_value=11.25) as choose:
+            self.assertTrue(_wait_for_collection_delivery_cooldown(task, config))
+            self.assertTrue(_wait_for_collection_delivery_cooldown(task, config))
+
+        choose.assert_called_once_with(5, 15)
+        self.assertEqual(task.context["boss_delivery_cooldown_minutes"], 11.25)
 
 
 if __name__ == "__main__":

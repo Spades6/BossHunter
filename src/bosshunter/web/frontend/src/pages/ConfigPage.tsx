@@ -328,14 +328,15 @@ export default function ConfigPage() {
               />
               <p className="mt-1 text-xs text-muted">仅补充语气和内容偏好，不能覆盖真实简历与安全规则。</p>
             </Field>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="最低薪资 (K)">
-                <Input type="number" value={config.profile?.salary_min || 0} onChange={e => updateConfig('profile.salary_min', Number(e.target.value))} min={0} max={200} />
-              </Field>
-              <Field label="最高薪资 (K)">
-                <Input type="number" value={config.profile?.salary_max || 0} onChange={e => updateConfig('profile.salary_max', Number(e.target.value))} min={0} max={200} />
-              </Field>
-            </div>
+            <NumberRangeField
+              label="期望薪资范围（K）"
+              minValue={config.profile?.salary_min ?? 0}
+              maxValue={config.profile?.salary_max ?? 0}
+              onMinChange={value => updateConfig('profile.salary_min', value)}
+              onMaxChange={value => updateConfig('profile.salary_max', value)}
+              min={0}
+              max={200}
+            />
             <Field label="排除关键词">
               <TagsInput value={config.profile?.deal_breakers || []} onChange={v => updateConfig('profile.deal_breakers', v)} placeholder="如：外包、996" />
             </Field>
@@ -442,48 +443,6 @@ export default function ConfigPage() {
           </div>
         </SectionCard>
 
-        {/* BOSS Collection Safety Section */}
-        <SectionCard title="BOSS 直聘采集安全" sectionKey="collection" expanded={expandedSections} toggle={toggleSection}>
-          <div className="space-y-4">
-            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              以下设置只适用于 BOSS 直聘。正文里孤立的“403”等词不会触发；明确风险连续确认两次后，本轮停止并冷却 5–10 分钟。
-            </p>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="BOSS 单日搜索页上限">
-                <Input type="number" value={config.collection?.daily_search_page_limit ?? 30} onChange={e => updateConfig('collection.daily_search_page_limit', Number(e.target.value))} min={1} max={200} />
-                {bossTheoreticalPages > 0 && (
-                  <p className={`mt-1 text-xs ${bossTheoreticalExceedsLimit ? 'font-bold text-amber-700' : 'text-muted'}`}>
-                    当前搜索组合理论最多 {bossTheoreticalPages} 页；{bossTheoreticalExceedsLimit ? `超过本上限 ${bossDailySearchLimit} 页，会在设置处和执行时提示。` : '未超过本上限。'}
-                  </p>
-                )}
-              </Field>
-              <Field label="BOSS 单日详情页尝试上限">
-                <Input type="number" value={config.collection?.daily_detail_page_limit ?? 150} onChange={e => updateConfig('collection.daily_detail_page_limit', Number(e.target.value))} min={1} max={500} />
-              </Field>
-              <Field label="BOSS 连续页面失败停止阈值">
-                <Input type="number" value={config.collection?.max_consecutive_page_failures ?? 3} onChange={e => updateConfig('collection.max_consecutive_page_failures', Number(e.target.value))} min={1} max={10} />
-              </Field>
-              <Field label="BOSS 风险暂停最少分钟">
-                <Input type="number" value={config.collection?.risk_pause_min_minutes ?? 5} onChange={e => updateConfig('collection.risk_pause_min_minutes', Number(e.target.value))} min={1} max={60} />
-              </Field>
-              <Field label="BOSS 风险暂停最多分钟">
-                <Input type="number" value={config.collection?.risk_pause_max_minutes ?? 10} onChange={e => updateConfig('collection.risk_pause_max_minutes', Number(e.target.value))} min={1} max={60} />
-              </Field>
-              <Field label="BOSS 采集间隔倍数">
-                <Input type="number" value={config.collection?.collection_delay_multiplier ?? 1.5} onChange={e => updateConfig('collection.collection_delay_multiplier', Number(e.target.value))} min={1} max={5} step={0.1} />
-              </Field>
-            </div>
-            <Field label="BOSS 采集后自动投递冷却（分钟）">
-              <Input type="number" value={config.collection?.delivery_cooldown_minutes ?? 30} onChange={e => updateConfig('collection.delivery_cooldown_minutes', Number(e.target.value))} min={0} max={240} />
-              <p className="mt-1 text-xs text-muted">只在同一流程完成 BOSS 采集后、开始 BOSS 投递前等待；单独采集不受影响。</p>
-            </Field>
-            <Field label="BOSS 单日页面访问总上限">
-              <Input type="number" value={config.safety?.daily_platform_page_limit ?? 500} onChange={e => updateConfig('safety.daily_platform_page_limit', Number(e.target.value))} min={1} max={2000} />
-              <p className="mt-1 text-xs text-muted">只合计 BOSS 采集、自动投递和监测打开的页面；智联和 51job 不占用。</p>
-            </Field>
-          </div>
-        </SectionCard>
-
         {/* Scoring Section */}
         <SectionCard title="评分设置" sectionKey="scoring" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">
@@ -492,42 +451,6 @@ export default function ConfigPage() {
             </Field>
             <Field label="每轮最大候选数">
               <Input type="number" value={config.scoring?.max_candidates || 20} onChange={e => updateConfig('scoring.max_candidates', Number(e.target.value))} min={1} max={100} />
-            </Field>
-          </div>
-        </SectionCard>
-
-        {/* Throttle Section */}
-        <SectionCard title="反检测设置" sectionKey="throttle" expanded={expandedSections} toggle={toggleSection}>
-          <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
-              <Field label="每日发送上限">
-                <Input type="number" value={config.throttle?.daily_limit || 30} onChange={e => updateConfig('throttle.daily_limit', Number(e.target.value))} />
-              </Field>
-              <Field label="最短间隔 (秒)">
-                <Input type="number" value={config.throttle?.interval_min || 60} onChange={e => updateConfig('throttle.interval_min', Number(e.target.value))} />
-              </Field>
-              <Field label="最长间隔 (秒)">
-                <Input type="number" value={config.throttle?.interval_max || 180} onChange={e => updateConfig('throttle.interval_max', Number(e.target.value))} />
-              </Field>
-            </div>
-            <div className="flex items-center justify-between">
-              <label className="text-xs text-foreground">发送前模拟浏览</label>
-              <Switch checked={config.throttle?.browse_before_greet ?? true} onChange={v => updateConfig('throttle.browse_before_greet', v)} />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="浏览最短时长 (秒)">
-                <Input type="number" value={config.throttle?.browse_duration_min || 15} onChange={e => updateConfig('throttle.browse_duration_min', Number(e.target.value))} />
-              </Field>
-              <Field label="浏览最长时长 (秒)">
-                <Input type="number" value={config.throttle?.browse_duration_max || 30} onChange={e => updateConfig('throttle.browse_duration_max', Number(e.target.value))} />
-              </Field>
-            </div>
-            <Field label="发送时间窗口">
-              <TagsInput value={config.throttle?.send_windows || ['09:00-16:00']} onChange={v => updateConfig('throttle.send_windows', v)} placeholder="HH:MM-HH:MM" />
-              <p className="mt-1 text-xs text-muted">后台任务会在当天最后一个发送窗口结束时自动停止。</p>
-            </Field>
-            <Field label="随机休息概率">
-              <Input type="number" value={config.throttle?.day_off_probability || 0.05} onChange={e => updateConfig('throttle.day_off_probability', Number(e.target.value))} step={0.01} min={0} max={1} />
             </Field>
           </div>
         </SectionCard>
@@ -638,6 +561,94 @@ export default function ConfigPage() {
           </div>
         </SectionCard>
 
+        {/* Anti-monitoring Section */}
+        <SectionCard title="反监测设置" sectionKey="collection" expanded={expandedSections} toggle={toggleSection}>
+          <div className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="BOSS 单日搜索页上限">
+                <Input type="number" value={config.collection?.daily_search_page_limit ?? 30} onChange={e => updateConfig('collection.daily_search_page_limit', Number(e.target.value))} min={1} max={200} />
+                {bossTheoreticalPages > 0 && (
+                  <p className={`mt-1 text-xs ${bossTheoreticalExceedsLimit ? 'font-bold text-amber-700' : 'text-muted'}`}>
+                    当前搜索组合理论最多 {bossTheoreticalPages} 页；{bossTheoreticalExceedsLimit ? `超过本上限 ${bossDailySearchLimit} 页，会在设置处和执行时提示。` : '未超过本上限。'}
+                  </p>
+                )}
+              </Field>
+              <Field label="BOSS 单日详情页尝试上限">
+                <Input type="number" value={config.collection?.daily_detail_page_limit ?? 150} onChange={e => updateConfig('collection.daily_detail_page_limit', Number(e.target.value))} min={1} max={500} />
+              </Field>
+              <Field label="BOSS 连续页面失败停止阈值">
+                <Input type="number" value={config.collection?.max_consecutive_page_failures ?? 3} onChange={e => updateConfig('collection.max_consecutive_page_failures', Number(e.target.value))} min={1} max={10} />
+              </Field>
+              <NumberRangeField
+                label="BOSS 风险暂停范围（分钟）"
+                minValue={config.collection?.risk_pause_min_minutes ?? 5}
+                maxValue={config.collection?.risk_pause_max_minutes ?? 10}
+                onMinChange={value => updateConfig('collection.risk_pause_min_minutes', value)}
+                onMaxChange={value => updateConfig('collection.risk_pause_max_minutes', value)}
+                min={1}
+                max={60}
+              />
+              <Field label="BOSS 操作间隔倍率">
+                <Input type="number" value={config.collection?.collection_delay_multiplier ?? 1.5} onChange={e => updateConfig('collection.collection_delay_multiplier', Number(e.target.value))} min={1} max={5} step={0.1} />
+                <p className="mt-1 text-xs text-muted">同时作用于 BOSS 采集和监测的页面操作与每轮等待；数值越大，间隔越长。</p>
+              </Field>
+              <NumberRangeField
+                label="BOSS 采集后投递冷却范围（分钟）"
+                minValue={config.collection?.delivery_cooldown_min_minutes ?? 5}
+                maxValue={config.collection?.delivery_cooldown_max_minutes ?? 15}
+                onMinChange={value => updateConfig('collection.delivery_cooldown_min_minutes', value)}
+                onMaxChange={value => updateConfig('collection.delivery_cooldown_max_minutes', value)}
+                min={0}
+                max={240}
+              />
+            </div>
+            <p className="text-xs text-muted">完成 BOSS 采集后，每次会在设定区间内随机等待一次再投递；默认为 5–15 分钟，单独采集不受影响。</p>
+            <Field label="BOSS 单日页面访问总上限">
+              <Input type="number" value={config.safety?.daily_platform_page_limit ?? 500} onChange={e => updateConfig('safety.daily_platform_page_limit', Number(e.target.value))} min={1} max={2000} />
+              <p className="mt-1 text-xs text-muted">只合计 BOSS 采集、自动投递和监测打开的页面；智联和 51job 不占用。</p>
+            </Field>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="每日发送上限">
+                <Input type="number" value={config.throttle?.daily_limit || 30} onChange={e => updateConfig('throttle.daily_limit', Number(e.target.value))} />
+              </Field>
+              <NumberRangeField
+                label="发送间隔范围（秒）"
+                minValue={config.throttle?.interval_min ?? 60}
+                maxValue={config.throttle?.interval_max ?? 180}
+                onMinChange={value => updateConfig('throttle.interval_min', value)}
+                onMaxChange={value => updateConfig('throttle.interval_max', value)}
+                min={10}
+                max={600}
+              />
+            </div>
+            <div className="grid items-end gap-4 md:grid-cols-2">
+              <div className="flex h-9 items-center justify-between rounded-md border border-card-border bg-[#FFFCFA] px-3">
+                <label className="text-xs text-foreground">发送前模拟浏览</label>
+                <Switch checked={config.throttle?.browse_before_greet ?? true} onChange={v => updateConfig('throttle.browse_before_greet', v)} />
+              </div>
+              <NumberRangeField
+                label="模拟浏览时长范围（秒）"
+                minValue={config.throttle?.browse_duration_min ?? 15}
+                maxValue={config.throttle?.browse_duration_max ?? 30}
+                onMinChange={value => updateConfig('throttle.browse_duration_min', value)}
+                onMaxChange={value => updateConfig('throttle.browse_duration_max', value)}
+                min={5}
+                max={120}
+                disabled={!(config.throttle?.browse_before_greet ?? true)}
+              />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="发送时间窗口">
+                <TagsInput value={config.throttle?.send_windows || ['09:00-16:00']} onChange={v => updateConfig('throttle.send_windows', v)} placeholder="HH:MM-HH:MM" />
+                <p className="mt-1 text-xs text-muted">当天最后一个窗口结束时自动停止。</p>
+              </Field>
+              <Field label="随机休息概率">
+                <Input type="number" value={config.throttle?.day_off_probability || 0.05} onChange={e => updateConfig('throttle.day_off_probability', Number(e.target.value))} step={0.01} min={0} max={1} />
+              </Field>
+            </div>
+          </div>
+        </SectionCard>
+
         {/* Monitor Section */}
         <SectionCard title="监控设置" sectionKey="monitor" expanded={expandedSections} toggle={toggleSection}>
           <div className="space-y-4">
@@ -724,5 +735,61 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <label className="block text-xs text-foreground mb-1.5">{label}</label>
       {children}
     </div>
+  )
+}
+
+function NumberRangeField({
+  label,
+  minValue,
+  maxValue,
+  onMinChange,
+  onMaxChange,
+  min,
+  max,
+  step,
+  disabled = false,
+}: {
+  label: string
+  minValue: number
+  maxValue: number
+  onMinChange: (value: number) => void
+  onMaxChange: (value: number) => void
+  min?: number
+  max?: number
+  step?: number
+  disabled?: boolean
+}) {
+  const inputClassName = 'h-9 min-w-0 flex-1 bg-transparent px-2 text-center text-sm text-foreground outline-none disabled:cursor-not-allowed disabled:text-muted'
+
+  return (
+    <Field label={label}>
+      <div className="flex h-9 items-center overflow-hidden rounded-md border border-card-border bg-white focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/30">
+        <span className="shrink-0 pl-3 text-[11px] text-muted">最少</span>
+        <input
+          aria-label={`${label}最少`}
+          className={inputClassName}
+          type="number"
+          value={minValue}
+          onChange={event => onMinChange(Number(event.target.value))}
+          min={min}
+          max={max}
+          step={step}
+          disabled={disabled}
+        />
+        <span className="flex h-full shrink-0 items-center border-x border-card-border bg-[#FFFCFA] px-3 text-xs font-bold text-muted">至</span>
+        <span className="shrink-0 pl-3 text-[11px] text-muted">最多</span>
+        <input
+          aria-label={`${label}最多`}
+          className={inputClassName}
+          type="number"
+          value={maxValue}
+          onChange={event => onMaxChange(Number(event.target.value))}
+          min={min}
+          max={max}
+          step={step}
+          disabled={disabled}
+        />
+      </div>
+    </Field>
   )
 }

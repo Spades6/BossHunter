@@ -326,65 +326,57 @@ def check_browser_connection(config: dict, collection_options: dict | None = Non
 			)
 
 	if result.get("chrome"):
-		boss_tab = result.get("boss_tab")
-		if boss_tab:
-			url = str(boss_tab.get("url") or "")
-			if any(marker in url.lower() for marker in ("/login", "/user/", "signin")):
-				checks.append(
-					_check(
-						"boss_login",
-						"BOSS 直聘登录",
-						"warning",
-						"BOSS 直聘可能尚未登录",
-						"请在已连接的 Google Chrome 中完成登录，再开始任务。",
-						"browser",
+		selected_platforms = set(collection_options.get("platform_order", [])) if collection_options else {"boss"}
+		if "boss" in selected_platforms:
+			boss_tab = result.get("boss_tab")
+			if boss_tab:
+				url = str(boss_tab.get("url") or "")
+				if any(marker in url.lower() for marker in ("/login", "/user/", "signin")):
+					checks.append(
+						_check(
+							"boss_login",
+							"BOSS 直聘登录",
+							"warning",
+							"BOSS 直聘可能尚未登录",
+							"请在已连接的 Google Chrome 中完成登录，再开始任务。",
+							"browser",
+						)
 					)
-				)
+				else:
+					checks.append(
+						_check(
+							"boss_tab",
+							"BOSS 直聘页面",
+							"pass",
+							"已发现 BOSS 直聘页面",
+							"请确认该页面已登录招聘平台账号。",
+						)
+					)
 			else:
 				checks.append(
 					_check(
 						"boss_tab",
 						"BOSS 直聘页面",
-						"pass",
-						"已发现 BOSS 直聘页面",
-						"请确认该页面已登录招聘平台账号。",
+						"warning",
+						"未发现已打开的 BOSS 直聘页面",
+						"请在已连接的 Google Chrome 中打开 www.zhipin.com 并确认已经登录。",
+						"browser",
 					)
 				)
-		else:
-			checks.append(
-				_check(
-					"boss_tab",
-					"BOSS 直聘页面",
-					"warning",
-					"未发现已打开的 BOSS 直聘页面",
-					"请在已连接的 Google Chrome 中打开 www.zhipin.com 并确认已经登录。",
-					"browser",
-				)
-				)
-		zhilian_tab = result.get("zhilian_tab")
-		need_zhilian = bool(collection_options and "zhilian" in collection_options.get("platform_order", []))
-		if zhilian_tab:
+		if "zhilian" in selected_platforms:
+			zhilian_tab = result.get("zhilian_tab")
 			page_state = result.get("zhilian_page") or {}
-			state = str(page_state.get("status") or "unknown")
+			state = str(page_state.get("status") or "unknown") if zhilian_tab else "missing"
 			if state == "ready":
 				checks.append(_check("zhilian_tab", "智联招聘页面", "pass", "智联搜索页可用，未发现登录墙", "采集不会点击投递或申请按钮。"))
 			elif state == "login_required":
-				checks.append(_check("zhilian_login", "智联招聘登录", "error" if need_zhilian else "warning", "智联页面要求登录", "请在已连接的 Google Chrome 中完成智联登录后重新检查。", "browser"))
+				checks.append(_check("zhilian_login", "智联招聘登录", "error", "智联页面要求登录", "请在已连接的 Google Chrome 中完成智联登录后重新检查。", "browser"))
 			elif state == "blocked":
-				checks.append(_check("zhilian_blocked", "智联页面状态", "error" if need_zhilian else "warning", "智联页面受到拦截", str(page_state.get("message") or "请人工处理验证码、频率限制或账号异常。"), "browser"))
+				checks.append(_check("zhilian_blocked", "智联页面状态", "error", "智联页面受到拦截", str(page_state.get("message") or "请人工处理验证码、频率限制或账号异常。"), "browser"))
+			elif state == "missing":
+				checks.append(_check("zhilian_tab", "智联招聘页面", "error", "未发现已打开的智联招聘页面", "请在已连接的 Google Chrome 中打开已登录的智联职位页后重新检查。", "browser"))
 			else:
-				checks.append(_check("zhilian_page", "智联页面结构", "error" if need_zhilian else "warning", "未识别到智联搜索页", str(page_state.get("message") or "请打开智联职位搜索页后重新检查。"), "browser"))
-		else:
-			checks.append(
-				_check(
-					"zhilian_tab",
-					"智联招聘页面",
-					"error" if need_zhilian else "warning",
-					"未发现已打开的智联招聘页面",
-					"请在已连接的 Google Chrome 中打开已登录的智联职位页后重新检查。" if need_zhilian else "仅在选择智联时打开智联搜索页并确认登录状态；当前预检不会自动登录。",
-					"browser",
-				)
-			)
+				checks.append(_check("zhilian_page", "智联页面结构", "error", "未识别到智联搜索页", str(page_state.get("message") or "请打开智联职位搜索页后重新检查。"), "browser"))
 	return checks
 
 

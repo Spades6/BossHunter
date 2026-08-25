@@ -63,6 +63,44 @@ class AiPreflightTests(unittest.TestCase):
 
 
 class BrowserPreflightTests(unittest.TestCase):
+	@patch("bosshunter.web.preflight.run_browser_diagnostics")
+	def test_unselected_platform_tabs_are_not_reported(self, diagnostics):
+		diagnostics.return_value = {
+			"node": {"available": True, "version": "v22"},
+			"runtime": True,
+			"chrome": True,
+			"browser_name": "Google Chrome",
+			"browser_product": "Chrome/138.0",
+			"boss_tab": {"targetId": "1", "url": "https://www.zhipin.com/web/geek/job"},
+			"zhilian_tab": None,
+			"errors": [],
+			"runtime_url": "http://127.0.0.1:3456",
+		}
+
+		checks = check_browser_connection({}, {"platform_order": ["boss"]})
+
+		self.assertFalse(any(check["id"].startswith("zhilian") for check in checks))
+
+	@patch("bosshunter.web.preflight.run_browser_diagnostics")
+	def test_zhilian_only_collection_does_not_report_missing_boss_tab(self, diagnostics):
+		diagnostics.return_value = {
+			"node": {"available": True, "version": "v22"},
+			"runtime": True,
+			"chrome": True,
+			"browser_name": "Google Chrome",
+			"browser_product": "Chrome/138.0",
+			"boss_tab": None,
+			"zhilian_tab": {"targetId": "2"},
+			"zhilian_page": {"status": "ready"},
+			"errors": [],
+			"runtime_url": "http://127.0.0.1:3456",
+		}
+
+		checks = check_browser_connection({}, {"platform_order": ["zhilian"]})
+
+		self.assertFalse(any(check["id"].startswith("boss") for check in checks))
+		self.assertEqual(next(check for check in checks if check["id"] == "zhilian_tab")["status"], "pass")
+
 	@patch("bosshunter.web.preflight.check_ai_connection")
 	@patch("bosshunter.web.preflight.check_browser_connection")
 	def test_full_flow_uses_only_explicit_full_flow_platform_order(self, browser_check, ai_check):

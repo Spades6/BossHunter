@@ -2018,8 +2018,8 @@ class WebApiRouteTests(unittest.TestCase):
             },
         }
         with patch.object(server, "load_config", return_value=config), patch.object(server, "_preflight_messages", return_value=[]), patch.object(
-            server.task_runner, "start", return_value={"id": "full-global-config"}
-        ) as start:
+            server, "_write_config"
+        ), patch.object(server.task_runner, "start", return_value={"id": "full-global-config"}) as start:
             status, _, body = self._request("/api/workbench/task", method="POST", json_body={"mode": "full"})
 
         self.assertTrue(status.startswith("200"), body)

@@ -9,6 +9,7 @@ import json
 import math
 import mimetypes
 import os
+import random
 import tempfile
 import time
 from copy import deepcopy
@@ -505,13 +506,16 @@ def _take_monitor_deliveries(task: WorkbenchTask) -> list[dict]:
 
 
 def _execute_monitor(task: WorkbenchTask, config: dict, *, initial_cooldown: bool = False) -> None:
-	from bosshunter.executor.monitor import monitor_and_send_resumes
+	from bosshunter.executor.monitor import (
+		get_effective_monitor_interval_minutes,
+		monitor_and_send_resumes,
+	)
 	if _stop_for_active_platform_lock(task):
 		return
 
 	monitor_config = dict(config)
 	monitor_config["_workbench_stop_event"] = task.stop_requested
-	interval_min = int(config.get("monitor", {}).get("interval", 30) or 30)
+	interval_min = get_effective_monitor_interval_minutes(config)
 	interval_sec = max(interval_min * 60, 1)
 	queue_lock = task.context.setdefault("monitor_queue_lock", Lock())
 	wakeup_event = task.context.setdefault("monitor_wakeup_event", Event())
@@ -548,7 +552,7 @@ def _execute_monitor(task: WorkbenchTask, config: dict, *, initial_cooldown: boo
 				task.stop_requested.set()
 				_log(task, reason)
 				return
-			_log(task, f"本轮监测完成，{interval_min} 分钟后再次检查")
+			_log(task, f"本轮监测完成，{interval_min:g} 分钟后再次检查")
 			wakeup_event.wait(interval_sec)
 			wakeup_event.clear()
 	finally:
@@ -733,11 +737,31 @@ def _wait_for_collection_delivery_cooldown(task: WorkbenchTask, config: dict) ->
 	completed_at = task.context.get("boss_collection_completed_monotonic")
 	if not isinstance(completed_at, (int, float)):
 		return False
-	raw_minutes = config.get("collection", {}).get("delivery_cooldown_minutes", 30)
-	try:
-		cooldown_seconds = max(float(raw_minutes), 0) * 60
-	except (TypeError, ValueError):
-		cooldown_seconds = 30 * 60
+	collection_config = config.get("collection", {})
+	selected_minutes = task.context.get("boss_delivery_cooldown_minutes")
+	if not isinstance(selected_minutes, (int, float)):
+		if (
+			"delivery_cooldown_min_minutes" in collection_config
+			or "delivery_cooldown_max_minutes" in collection_config
+		):
+			try:
+				minimum = max(float(collection_config.get("delivery_cooldown_min_minutes", 5)), 0)
+			except (TypeError, ValueError):
+				minimum = 5
+			try:
+				maximum = max(float(collection_config.get("delivery_cooldown_max_minutes", 15)), 0)
+			except (TypeError, ValueError):
+				maximum = 15
+			minimum, maximum = sorted((minimum, maximum))
+			selected_minutes = random.uniform(minimum, maximum)
+		else:
+			# Compatibility with configurations saved before random cooldown ranges.
+			try:
+				selected_minutes = max(float(collection_config.get("delivery_cooldown_minutes", 10)), 0)
+			except (TypeError, ValueError):
+				selected_minutes = 10
+		task.context["boss_delivery_cooldown_minutes"] = selected_minutes
+	cooldown_seconds = float(selected_minutes) * 60
 	remaining = max(cooldown_seconds - (time.monotonic() - completed_at), 0)
 	if remaining <= 0:
 		return False

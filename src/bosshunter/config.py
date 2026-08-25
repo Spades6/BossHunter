@@ -92,7 +92,8 @@ DEFAULTS: dict[str, Any] = {
         "risk_pause_min_minutes": 5,
         "risk_pause_max_minutes": 10,
         "collection_delay_multiplier": 1.5,
-        "delivery_cooldown_minutes": 30,
+        "delivery_cooldown_min_minutes": 5,
+        "delivery_cooldown_max_minutes": 15,
     },
     "platforms": {
         "boss": {
@@ -223,6 +224,8 @@ def remove_retired_collection_settings(config: dict[str, Any]) -> dict[str, Any]
     collection = config.get("collection", {})
     collection.pop("daily_new_jobs_limit", None)
     collection.pop("default_target_count", None)
+    if "delivery_cooldown_min_minutes" in collection or "delivery_cooldown_max_minutes" in collection:
+        collection.pop("delivery_cooldown_minutes", None)
     search = config.get("search", {})
     search.pop("target_count", None)
     platforms = config.get("platforms", {})
