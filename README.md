@@ -363,121 +363,57 @@ A: 项目通过 CDP (Chrome DevTools Protocol) 直连你日常使用的浏览器
 | 日期 | 版本号 | 类型 | 更新内容 |
 |------|--------|------|----------|
 | 2026-08-25 | v2.3.1 | 多平台与安全整合 | 合入智联/51job 只读采集、外部平台人工投递闭环、岗位池与筛选增强、Windows 兼容、招呼语与消息判定修复，并重整 BOSS 页面访问保护设置。 |
-| 2026-08-13 | v2.3.0 | 功能与可恢复性 | 增加多范围岗位导出、离线城市目录、任务安全的岗位回收站和可独立重试的 AI 评分；同步改进配置安全、岗位筛选与投递队列。 |
-| 2026-08-02 | v2.2.0 | 功能与稳定性 | 单岗位失败不再中断全流程；额度未完成岗位下次优先续发；加强首次沟通、历史会话、任务停止、后台页面与最新配置生效逻辑，并简化工作台。 |
-| 2026-07-30 | v2.1.1 | 稳定性修复 | 修复 AI 评分与招呼语可能因 Token 限制中断的问题：回答被截断时增大输出上限重试，上下文过长时压缩请求，额度或限流异常会保留进度并在工作台显示原因。 |
-| 2026-07-30 | v2.1.0 | 功能与体验 | 支持中文名 Markdown 和 Word（`.docx`）简历；新增 DeepSeek、豆包和自定义兼容 API；启动前会明确提示 Chrome、远程调试与 AI 配置问题。 |
-| 2026-07-27 | v2.0.0 | 功能改进 | 优化定制简历投递和监测恢复流程，并清理公开文档中的隐私信息。 |
-| 2026-06-29 | v2.0.0 | 稳定性 | 修复工作台任务可能卡住的问题；自动跟进默认关闭，把发送决定留给用户。 |
 
-> 查看每个版本的完整说明：[CHANGELOG.md](CHANGELOG.md)
+完整版本历史、升级说明和验证记录见 [CHANGELOG.md](CHANGELOG.md)。
 
-<details>
-<summary><strong>展开查看 v2.3.1 多平台与安全整合</strong></summary>
+---
 
-### 多平台与人工投递闭环
+## 🏆 贡献总榜 Top 10
 
-- **智联与 51job 只读采集**：三个平台统一串行编排，但保留独立关键词、城市、页数、排序和来源身份；51job 已验证北京、上海城市码。
-- **外部平台不自动发送**：智联与 51job 岗位只在本地评分、生成招呼语并提供原平台链接；用户人工投递后可二次确认标记“已发送”，不占用 BOSS 自动发送额度。
-- **BOSS 能力边界不变**：自动发送继续限定 BOSS 岗位，且必须经过人工确认、发送时间窗口、随机间隔和每日发送额度检查。
+只统计实际进入主线的外部人类贡献，不按提交次数或代码行数排名。
 
-### 岗位池、筛选与沟通可靠性
+| 排名 | 贡献者 | 贡献度 | 主要贡献方向 |
+|:---:|---|:---:|---|
+| 🥇 | [@zhenian-666](https://github.com/zhenian-666) | **16%** | 岗位导出、城市目录、回收站、独立 AI 评分与多平台采集架构 |
+| 🥈 | [@GioiaZheng](https://github.com/GioiaZheng) | **14%** | API Key 安全、PDF 依赖降级与人工确认流程修复 |
+| 🥉 | [@atticus-zhou](https://github.com/atticus-zhou) | **11%** | AI 重试、浏览器交互、送达验证与防重复发送 |
+| 4 | [@haohao-fly](https://github.com/haohao-fly) | **10%** | 岗位筛选、评分重试、投递队列与任务保护 |
+| 5 | [@meixiaoxie](https://github.com/meixiaoxie) | **9%** | 配置安全、公司屏蔽、城市查询与 Windows 回归测试 |
+| 5 | [@shuaigechz-cloud](https://github.com/shuaigechz-cloud) | **9%** | 送达确认、消息方向识别与招呼语约束 |
+| 5 | [@hdfhssg](https://github.com/hdfhssg) | **9%** | 学历与招聘类型筛选、岗位池与投递队列 |
+| 8 | [@yukinoshi](https://github.com/yukinoshi) | **7%** | 多 AI 响应与 Windows 运行时兼容 |
+| 9 | [@Nourishman](https://github.com/Nourishman) | **5%** | PDF 简历、模型规范化与确认流程竞态修复 |
+| 10 | [@Henry369-0](https://github.com/Henry369-0) | **4%** | Windows 启动器、快捷方式与运行路径兼容 |
 
-- **筛选和评分增强**：增加学历、招聘类型、未知学历处理与评分上下文；支持招呼语风格偏好及确定性的长度、开头去重、套话和技术堆叠约束。
-- **岗位池增强**：增加分页、页码跳转、白名单排序、城市与来源展示、一键 AI 评分、投递队列、延期原因和额度提示。
-- **消息判定更可靠**：发送结果需从对应会话确认，不再把输入框清空当作成功；监听区分 HR、本人和平台系统消息。
+## 🔥 近 30 天贡献榜 Top 10
 
-### 安全、兼容与设置
+统计窗口：**2026-07-30 至 2026-08-28（Asia/Shanghai）**。采用与总榜相同的影响维度，只计算该窗口内被主线采纳的部分。
 
-- **BOSS 页面访问保护**：按搜索页、详情页和平台页面总量控制 BOSS 页面访问；采集计划超过单日搜索页上限时，配置页会提前提醒。采集结果数量不再作为安全上限，智联与 51job 也不占用 BOSS 页面额度。
-- **风险误报收敛**：不再因正文中孤立的风险词直接判定拦截；明确风险会复核，并采用可配置的短时随机冷却。项目不会绕过验证码或平台限制。
-- **采集与监测共用页面访问设置**：相关配置集中到“反监测设置”，采集后投递冷却和风险暂停使用最少/最多分钟区间，界面合并展示以减少配置项。
-- **Windows 兼容**：支持系统保留端口自动回退，并加入可选的一键启动器、桌面快捷方式、隐藏后台窗口和 Python 路径覆盖。
-- **简历上传校验**：先吸收 Markdown UTF-8 编码验证；完整简历工作室仍作为独立功能继续审查。
+| 排名 | 贡献者 | 本期主要贡献 |
+|:---:|---|---|
+| 🥇 | [@zhenian-666](https://github.com/zhenian-666) | 可恢复岗位工具与智联统一采集架构 |
+| 🥈 | [@atticus-zhou](https://github.com/atticus-zhou) | AI 与招呼语可靠性、送达验证 |
+| 🥉 | [@haohao-fly](https://github.com/haohao-fly) | 岗位筛选、评分与投递队列 |
+| 4 | [@meixiaoxie](https://github.com/meixiaoxie) | 配置安全、公司屏蔽与城市查询 |
+| 4 | [@shuaigechz-cloud](https://github.com/shuaigechz-cloud) | 会话送达、消息方向与招呼语约束 |
+| 4 | [@hdfhssg](https://github.com/hdfhssg) | 学历、招聘类型与岗位池增强 |
+| 7 | [@yukinoshi](https://github.com/yukinoshi) | Thinking 模式与 Windows 运行时兼容 |
+| 8 | [@Nourishman](https://github.com/Nourishman) | PDF 简历与确认流程修复 |
+| 9 | [@Henry369-0](https://github.com/Henry369-0) | Windows 一键启动与桌面兼容 |
+| 10 | [@yuj-029](https://github.com/yuj-029) | 51job 研究与只读采集核心 |
 
-### 本轮整合与验证
+[查看完整榜单、证据链接、历月快照与计算口径](CONTRIBUTORS.md)
 
-主要来源为 [#45](https://github.com/powerycy/BossHunter/pull/45)、[#48](https://github.com/powerycy/BossHunter/pull/48)、[#49](https://github.com/powerycy/BossHunter/pull/49)、[#50](https://github.com/powerycy/BossHunter/pull/50)、[#51](https://github.com/powerycy/BossHunter/pull/51)、[#55](https://github.com/powerycy/BossHunter/pull/55)、[#57](https://github.com/powerycy/BossHunter/pull/57)、[#58](https://github.com/powerycy/BossHunter/pull/58)、[#61](https://github.com/powerycy/BossHunter/pull/61)、[#64](https://github.com/powerycy/BossHunter/pull/64)、[#65](https://github.com/powerycy/BossHunter/pull/65) 和 [#66](https://github.com/powerycy/BossHunter/pull/66)，统一由 [#62](https://github.com/powerycy/BossHunter/pull/62) 选择性整合。最终回归为 **401 项测试、16 个子测试通过**，GitHub CI 的 Python 3.11 / 3.12 均通过，并完成本地真实环境验收。
+## 🧭 现任维护者
 
-</details>
+维护者按责任域展示，不进行名次竞争。候选人完成 2–4 周观察并正式晋升后才会出现在这里。
 
-<details>
-<summary><strong>展开查看 v2.3.0 功能与可恢复性更新</strong></summary>
+| GitHub | 角色 | 负责范围 | 任期状态 |
+|---|---|---|---|
+| [@powerycy](https://github.com/powerycy) | 项目负责人 | 全项目；核心与安全最终审批 | Active |
 
-### 功能与可恢复性更新
+[查看候选与历任维护者、任期和治理贡献](MAINTAINERS.md) · [查看维护者统计与治理规则](GOVERNANCE.md)
 
-- **岗位导出与城市目录**：支持按当前筛选或全量范围导出，自定义城市查询使用本地目录优先完成。
-- **岗位回收站**：删除岗位先进入回收站，支持恢复和任务期间安全处理。
-- **独立 AI 评分**：单条评分失败会保留为待处理，可稍后单独重试，不阻断其他岗位。
-- **安全与可用性**：配置原子写入、无凭据下载、公司屏蔽、筛选与投递队列获得完整验证。
-
-### 贡献者致谢
-
-本版本由 [@haohao-fly](https://github.com/haohao-fly)、[@meixiaoxie](https://github.com/meixiaoxie) 和 [@zhenian-666](https://github.com/zhenian-666) 共同贡献，具体影响记录在下方的 [社区贡献影响力](#-社区贡献影响力) 榜单中。
-
-</details>
-
-<details>
-<summary><strong>展开查看 v2.2.0 功能与稳定性更新</strong></summary>
-
-### 功能与稳定性更新
-
-- **部分失败继续流程**：单个岗位发送失败后单独记录，其他岗位和后续 HR 回复监测继续执行。
-- **额度待办自动续发**：因每日额度未执行的已确认岗位保留招呼语，下次运行全流程时优先处理。
-- **最新配置立即生效**：人工确认期间修改的每日上限、发送间隔等设置，在真正发送前重新读取。
-- **首次沟通与历史会话兼容**：根据平台预设招呼语、首次沟通编辑器和已存在会话选择对应发送路径，增加结果验证与安全重试。
-- **停止更及时**：采集、AI 请求、招呼语、发送和监测统一响应停止请求，已完成结果会保留。
-- **工作台简化**：移除普通用户不需要的全量重新评分入口，三个主要操作按三栏布局展示。
-- **系统性风险仍会暂停**：验证码、限流、账号拦截或连续系统错误会中止发送，避免继续触发平台风控。
-
-### 贡献者致谢
-
-本版本涉及的贡献者与具体功能已统一记录在下方的 [社区贡献影响力](#-社区贡献影响力) 榜单中。
-
-</details>
-
-<details>
-<summary><strong>展开查看 v2.1.1 稳定性修复</strong></summary>
-
-### 稳定性修复
-
-- **Token 截断自动恢复**：评分或招呼语回答因输出上限被截断时，自动增大当前请求的输出 Token 上限后重试。
-- **上下文超限自动恢复**：简历或岗位内容超过模型上下文时，保留关键信息并压缩当前请求后重试。
-- **失败不丢进度**：单个岗位仍失败时保留待处理状态；额度不足、限流或鉴权异常会保存已完成结果并安全暂停。
-- **前端明确反馈**：工作台任务日志会显示 Token、额度、限流、鉴权或连接问题，不再只表现为操作中断。
-
-</details>
-
-<details>
-<summary><strong>展开查看 v2.1.0 更新说明</strong></summary>
-
-#### 新功能
-
-- **简历上传兼容性**：支持中文文件名的 Markdown 简历，并新增 Word（`.docx`）简历上传与文本解析。
-- **多 AI 服务商**：配置面板支持 DeepSeek、豆包、Anthropic、OpenAI 和自定义兼容接口，自动填写对应协议与 Base URL。
-- **Web 工作台升级**：新增本地可视化工作台，集中展示采集、评分、确认、发送、监测与简历生成状态。
-- **启动前环境诊断**：前端逐项检查 Google Chrome、远程调试、招聘平台页面、AI Key、Base URL、模型、简历与搜索配置，并给出中文修复提示。
-- **简历请求卡片识别**：可识别招聘平台聊天中的「附件简历请求」卡片，并归类为简历请求。
-- **定制简历生成**：检测到 HR 要简历后，根据岗位 JD 生成定制 PDF 简历，提供下载与手动发送入口。
-- **监测执行视图**：按「待回复 / 简历请求 / 自动跟进 / 已回复」分类查看监测结果。
-- **AI 建议回复**：检测到 HR 问题时可生成建议回复，默认需要人工确认后再发送。
-- **自动跟进记录**：对超时未回复岗位执行一次自动跟进，并在监测执行中保留跟进内容。
-
-#### 安全与隐私
-
-- **人工确认边界更清晰**：卡片识别只做归类提醒和简历生成，不自动点击「同意 / 拒绝 / 发简历」。
-- **配置脱敏**：Web API 返回配置时不暴露原始 API Key。
-- **示例配置脱敏**：公开仓库只保留占位配置，不包含个人简历、联系方式、数据库或运行时数据。
-- **兼容 API 说明泛化**：支持 Anthropic Messages 兼容接口与模型名模糊匹配，不在公开文档中暴露内部服务名称或内部域名。
-
-#### 体验优化
-
-- **仪表盘去重**：同一岗位的监测记录在前端按最新记录展示，减少重复刷屏。
-- **统计口径优化**：「简历生成」按实际生成的简历文件统计。
-- **AI 连接引导**：用户可让安装 AI 协助打开本地配置面板、选择服务商并检测连接；API Key 只在本地面板填写，不读取安装 AI 自身的登录凭证。
-- **本地 Browser Runtime**：内置 CDP 代理连接日常 Chrome，减少额外浏览器配置成本。
-
-</details>
 
 ---
 
@@ -506,34 +442,4 @@ https://github.com/powerycy/BossHunter
 - 不接受收集、上传或外发用户隐私数据的 PR。
 - 建议先开 Issue 讨论再提交大改动。
 
-### 🧩 维护者招募（进行中）
-
-首轮招募 **6 名候选维护者**：核心与安全 3 名、产品与 AI 2 名、平台适配 1 名。候选人先进入 2–4 周观察期，不会立即获得写权限；平台适配工作量增加后再补充第 7 名候选。
-
-[申请成为候选维护者](https://github.com/shengjidaguai-china/BossHunter/issues/new?template=maintainer_application.md) · [查看治理与晋升规则](GOVERNANCE.md) · [查看现任、候选及历任维护者](MAINTAINERS.md)
-
-维护者任期与负责范围从本制度启用后持续留档，并与下方贡献榜分开管理。
-
----
-
-## 🏆 社区贡献影响力
-
-BossHunter 感谢每一位参与改进的开发者。下面的榜单记录外部贡献者带来的实际功能、当前采纳状态和相对影响力，让贡献不只停留在提交数量上。
-
-| 排名 | 贡献者 | 贡献度 | 状态 | 主要贡献 | 相关 PR |
-|:---:|---|:---:|:---:|---|---|
-| 🥇 | [@zhenian-666](https://github.com/zhenian-666) | **16%** | ✅ 已适配合入 | 📦 多范围岗位导出、城市目录、回收站与独立 AI 评分；新增统一平台采集架构和智联只读采集 | [#40](https://github.com/powerycy/BossHunter/pull/40) → [#41](https://github.com/powerycy/BossHunter/pull/41) · [#42](https://github.com/powerycy/BossHunter/pull/42) · [#43](https://github.com/powerycy/BossHunter/pull/43) · [#45](https://github.com/powerycy/BossHunter/pull/45) → [#62](https://github.com/powerycy/BossHunter/pull/62) |
-| 🥈 | [@GioiaZheng](https://github.com/GioiaZheng) | **14%** | ✅ 已合并 | 🛡️ API Key 脱敏与安全读取；PDF 依赖降级；修正人工确认、招呼语和发送的岗位选择；清理未支持的服务商说明 | [#6](https://github.com/powerycy/BossHunter/pull/6) · [#7](https://github.com/powerycy/BossHunter/pull/7) · [#8](https://github.com/powerycy/BossHunter/pull/8) · [#9](https://github.com/powerycy/BossHunter/pull/9) · [#10](https://github.com/powerycy/BossHunter/pull/10) · [#12](https://github.com/powerycy/BossHunter/pull/12) |
-| 🥉 | [@atticus-zhou](https://github.com/atticus-zhou) | **11%** | ✅ 已合并 | 🤖 实现 AI 评分与招呼语重试、前台浏览器交互、送达状态验证和防重复发送 | [#27](https://github.com/powerycy/BossHunter/pull/27) → [#28](https://github.com/powerycy/BossHunter/pull/28) |
-| 4 | [@haohao-fly](https://github.com/haohao-fly) | **10%** | ✅ 已合并 | 📊 岗位筛选、分页与统计；结构化评分与失败重试；投递队列和重复任务保护 | [#38](https://github.com/powerycy/BossHunter/pull/38) → [#39](https://github.com/powerycy/BossHunter/pull/39) |
-| 5 | [@meixiaoxie](https://github.com/meixiaoxie) | **9%** | ✅ 已合并 | 🔐 配置原子写入与无凭据下载；公司屏蔽；自定义城市查询；Windows WSGI 回归测试 | [#37](https://github.com/powerycy/BossHunter/pull/37) → [#39](https://github.com/powerycy/BossHunter/pull/39) |
-| 5 | [@shuaigechz-cloud](https://github.com/shuaigechz-cloud) | **9%** | ✅ 已适配合入 | 💬 会话级送达确认、HR/本人/系统消息方向识别，以及确定性的招呼语风格约束 | [#49](https://github.com/powerycy/BossHunter/pull/49) · [#50](https://github.com/powerycy/BossHunter/pull/50) · [#51](https://github.com/powerycy/BossHunter/pull/51) → [#62](https://github.com/powerycy/BossHunter/pull/62) |
-| 5 | [@hdfhssg](https://github.com/hdfhssg) | **9%** | ✅ 已适配合入 | 🎓 学历与校招/社招筛选、评分上下文、个人偏好；岗位池分页排序、投递队列和额度提示 | [#54](https://github.com/powerycy/BossHunter/pull/54) · [#55](https://github.com/powerycy/BossHunter/pull/55) · [#64](https://github.com/powerycy/BossHunter/pull/64) · [#65](https://github.com/powerycy/BossHunter/pull/65) → [#62](https://github.com/powerycy/BossHunter/pull/62) |
-| 8 | [@yukinoshi](https://github.com/yukinoshi) | **7%** | ✅ 已适配合入 | 🧠 Thinking 模式、多 AI 响应和 Windows JavaScript MIME 兼容；Windows 系统保留端口自动回退 | [#25](https://github.com/powerycy/BossHunter/pull/25) → [#28](https://github.com/powerycy/BossHunter/pull/28) · [#48](https://github.com/powerycy/BossHunter/pull/48) → [#62](https://github.com/powerycy/BossHunter/pull/62) |
-| 9 | [@Nourishman](https://github.com/Nourishman) | **5%** | ✅ 部分适配合入 | 📄 带文字层 PDF 简历上传与错误提示；DeepSeek 模型 ID 规范化；已批准岗位恢复与确认交接竞态修复 | [#29](https://github.com/powerycy/BossHunter/pull/29) |
-| 10 | [@Henry369-0](https://github.com/Henry369-0) | **4%** | ✅ 已适配合入 | 🪟 Windows 一键启动器、桌面快捷方式、后台窗口隐藏与 Python 路径覆盖 | [#57](https://github.com/powerycy/BossHunter/pull/57) → [#62](https://github.com/powerycy/BossHunter/pull/62) |
-| 11 | [@yuj-029](https://github.com/yuj-029) | **3%** | ✅ 部分适配合入 | 🔎 51job 页面研究与只读采集核心；复用主线统一来源字段、数据库和节流机制 | [#58](https://github.com/powerycy/BossHunter/pull/58) → [#62](https://github.com/powerycy/BossHunter/pull/62) |
-| 12 | [@elowenzhouyb-source](https://github.com/elowenzhouyb-source) | **2%** | ✅ 已合并 | 🧭 提交并组织 AI 评分、招呼语与发送可靠性改进方案，推动问题定位和整体验证 | [#27](https://github.com/powerycy/BossHunter/pull/27) → [#28](https://github.com/powerycy/BossHunter/pull/28) |
-| 13 | [@Colin-Cai0318](https://github.com/Colin-Cai0318) | **1%** | ✅ 部分适配合入 | 🧾 Markdown 简历上传 UTF-8 编码校验；完整简历工作室继续独立审查 | [#61](https://github.com/powerycy/BossHunter/pull/61) → [#62](https://github.com/powerycy/BossHunter/pull/62) |
-
-> **计算口径**：产品影响 40% + 可靠性与安全 25% + 测试与可维护性 20% + 采纳状态 15%。本榜单只计算实际进入主线的内容；选择性整合按最终采用范围计分，未采用或仍在审查的部分不计入。为保持总和 100%，历史贡献会随新增贡献按相同口径重新归一化。百分比不代表代码所有权、奖金分配或单纯的代码行数。项目发起人和 AI 工具提交不参与本榜单。数据更新于 **2026-08-25**；如署名或功能描述需要修正，欢迎提交 Issue。
+[查看完整贡献榜与统计规则](CONTRIBUTORS.md) · [申请成为候选维护者](https://github.com/shengjidaguai-china/BossHunter/issues/new?template=maintainer_application.md) · [查看项目治理](GOVERNANCE.md)
