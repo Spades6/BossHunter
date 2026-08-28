@@ -29,6 +29,7 @@
 | GitHub | 维护域 | 观察期开始 | 推荐/带教人 | 状态 |
 |---|---|---|---|---|
 | [@yukinoshi](https://github.com/yukinoshi) | 核心与安全 | 2026-08-28 | [@powerycy](https://github.com/powerycy) | 观察中（Triage） |
+| [@yuppiez99999](https://github.com/yuppiez99999) | 平台适配 | 2026-08-28 | [@powerycy](https://github.com/powerycy) | 观察中（Triage；[申请 #96](https://github.com/shengjidaguai-china/BossHunter/issues/96)） |
 
 ## 历任维护者
 
