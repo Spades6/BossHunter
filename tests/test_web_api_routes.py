@@ -1930,6 +1930,111 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertEqual(history_actions[1]["action"], "replied")
         self.assertIn("已手动回复 HR", history_actions[1]["detail"])
 
+    def test_web_api_history_reply_confirmation_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("reply-once"))
+                add_history(db, "reply-once", "reply_pending", "AI建议回复")
+                history_id = db.execute(
+                    "SELECT id FROM history WHERE job_id = ? AND action = 'reply_pending'",
+                    ("reply-once",),
+                ).fetchone()["id"]
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            first_status, _, first_body = self._request(
+                f"/api/history/{history_id}/reply",
+                method="POST",
+                json_body={"message": "已手动回复 HR"},
+            )
+            second_status, _, second_body = self._request(
+                f"/api/history/{history_id}/reply",
+                method="POST",
+                json_body={"message": "已手动回复 HR"},
+            )
+
+            verify_db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                reply_count = verify_db.execute(
+                    "SELECT COUNT(*) FROM history WHERE job_id = ? AND action = 'replied'",
+                    ("reply-once",),
+                ).fetchone()[0]
+            finally:
+                verify_db.close()
+
+        self.assertTrue(first_status.startswith("200"), first_body)
+        self.assertTrue(second_status.startswith("200"), second_body)
+        self.assertTrue(json.loads(second_body)["already_resolved"])
+        self.assertEqual(reply_count, 1)
+
+    def test_web_api_history_dismiss_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("dismiss-once"))
+                add_history(db, "dismiss-once", "reply_pending", "AI建议回复")
+                history_id = db.execute(
+                    "SELECT id FROM history WHERE job_id = ? AND action = 'reply_pending'",
+                    ("dismiss-once",),
+                ).fetchone()["id"]
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            first_status, _, first_body = self._request(
+                f"/api/history/{history_id}/dismiss",
+                method="POST",
+                json_body={},
+            )
+            second_status, _, second_body = self._request(
+                f"/api/history/{history_id}/dismiss",
+                method="POST",
+                json_body={},
+            )
+
+            verify_db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                dismiss_count = verify_db.execute(
+                    "SELECT COUNT(*) FROM history WHERE job_id = ? AND action = 'reply_dismissed'",
+                    ("dismiss-once",),
+                ).fetchone()[0]
+            finally:
+                verify_db.close()
+
+        self.assertTrue(first_status.startswith("200"), first_body)
+        self.assertTrue(second_status.startswith("200"), second_body)
+        self.assertTrue(json.loads(second_body)["already_resolved"])
+        self.assertEqual(dismiss_count, 1)
+
+    def test_web_api_history_dismiss_rejects_stale_reply_round(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("dismiss-stale"))
+                add_history(db, "dismiss-stale", "reply_pending", "第一轮建议")
+                stale_history_id = db.execute(
+                    "SELECT id FROM history WHERE job_id = ? AND action = 'reply_pending'",
+                    ("dismiss-stale",),
+                ).fetchone()["id"]
+                add_history(db, "dismiss-stale", "reply_pending", "第二轮建议")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            status, _, body = self._request(
+                f"/api/history/{stale_history_id}/dismiss",
+                method="POST",
+                json_body={},
+            )
+
+        self.assertTrue(status.startswith("409"), body)
+        self.assertIn("最新一轮", json.loads(body)["error"])
+
     def test_web_api_unresolved_count_includes_resume_failures_and_excludes_resolved_rows(self):
         # Arrange
         with tempfile.TemporaryDirectory() as tmp:
@@ -1965,10 +2070,12 @@ class WebApiRouteTests(unittest.TestCase):
             try:
                 insert_job(db, _job("resume-failed-open"))
                 insert_job(db, _job("resume-failed-resolved"))
+                insert_job(db, _job("reply-open"))
                 insert_job(db, _job("recent-job"))
                 add_history(db, "resume-failed-open", "resume_failed", "仍需处理")
                 add_history(db, "resume-failed-resolved", "resume_failed", "旧失败")
                 add_history(db, "resume-failed-resolved", "resume_sent", "后来已成功")
+                add_history(db, "reply-open", "reply_pending", "待确认回复")
                 add_history(db, "recent-job", "sent", "最近记录")
             finally:
                 db.close()
@@ -1982,7 +2089,11 @@ class WebApiRouteTests(unittest.TestCase):
         payload = json.loads(body)
         self.assertEqual(
             {(item["job_id"], item["action"]) for item in payload},
-            {("recent-job", "sent"), ("resume-failed-open", "resume_failed")},
+            {
+                ("recent-job", "sent"),
+                ("reply-open", "reply_pending"),
+                ("resume-failed-open", "resume_failed"),
+            },
         )
 
     def test_web_api_history_exposes_structured_failure_reason_and_resolution_state(self):
@@ -2035,6 +2146,8 @@ class WebApiRouteTests(unittest.TestCase):
             "事实完整性校验失败：新增了 50%",
         )
         self.assertFalse(unresolved_item["resolved"])
+        self.assertEqual(unresolved_item["url"], "https://example.com/job")
+        self.assertEqual(unresolved_item["source_platform"], "boss")
         self.assertTrue(resolved_item["resolved"])
         self.assertEqual(resolved_item["resume_path"], "/tmp/generated.md")
 
