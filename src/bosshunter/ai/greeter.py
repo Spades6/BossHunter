@@ -515,8 +515,24 @@ def generate_greetings(config: dict) -> int:
     if _workbench_job_ids:
         jobs = [job for job in jobs if str(job["id"]) in _workbench_job_ids]
 
+    requested_count = len(jobs)
+    existing_jobs = [job for job in jobs if str(job.get("greeting") or "").strip()]
+    jobs = [job for job in jobs if not str(job.get("greeting") or "").strip()]
+    config["_workbench_greeting_report"] = {
+        "requested_count": requested_count,
+        "generated_count": 0,
+        "skipped_existing": len(existing_jobs),
+        "failed_count": 0,
+    }
+    for job in existing_jobs:
+        # Keep manually edited text intact while making the job eligible for delivery.
+        update_job_status(db, job["id"], "ready")
+    if existing_jobs:
+        _notify(config, f"已保留 {len(existing_jobs)} 个岗位现有的招呼语，不会用 AI 覆盖。")
+
     if not jobs:
-        console.print("[yellow]没有已确认的岗位可生成招呼语。请先运行 `bosshunter confirm`，或使用 `bosshunter run` 执行完整流程。[/yellow]")
+        if not existing_jobs:
+            console.print("[yellow]没有已确认的岗位可生成招呼语。请先运行 `bosshunter confirm`，或使用 `bosshunter run` 执行完整流程。[/yellow]")
         db.close()
         return 0
 
@@ -663,4 +679,8 @@ def generate_greetings(config: dict) -> int:
         )
     if failed:
         _notify(config, f"本轮有 {failed} 个岗位未生成招呼语并保留为待处理，可稍后重试。")
+    config["_workbench_greeting_report"].update({
+        "generated_count": count,
+        "failed_count": failed,
+    })
     return count

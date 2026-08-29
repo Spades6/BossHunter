@@ -1,4 +1,5 @@
 import json
+from urllib.parse import parse_qs
 from unittest import TestCase
 from unittest.mock import MagicMock
 
@@ -11,7 +12,9 @@ from bosshunter.collection.platforms.boss import (
     SEARCH_URL,
     BossBrowser,
     BossCollector,
+    build_boss_filter_query,
     generate_boss_job_id,
+    normalize_boss_search_filters,
 )
 
 
@@ -41,6 +44,36 @@ class BossCollectorUnitTests(TestCase):
         self.assertIn("zhipin.com", SEARCH_URL)
         self.assertIn("{keyword}", SEARCH_URL)
         self.assertIn("{city_code}", SEARCH_URL)
+
+    def test_boss_filters_are_encoded_from_known_options(self):
+        query = parse_qs(build_boss_filter_query({
+            "job_type": ["全职"],
+            "experience": ["应届生", "1-3年"],
+            "degree": ["本科"],
+            "scale": ["100-499人"],
+            "salary": ["10-20K"],
+            "industry": ["100001", "100002"],
+        }))
+
+        self.assertEqual(query["jobType"], ["0"])
+        self.assertEqual(query["experience"], ["102,104"])
+        self.assertEqual(query["degree"], ["203"])
+        self.assertEqual(query["scale"], ["303"])
+        self.assertEqual(query["salary"], ["405"])
+        self.assertEqual(query["industry"], ["100001,100002"])
+
+    def test_boss_filters_reject_unknown_labels_and_query_injection(self):
+        normalized = normalize_boss_search_filters({
+            "experience": ["1-3年", "任意经验"],
+            "industry": ["100001&sortType=2", "200002"],
+            "unexpected": ["value"],
+        })
+
+        self.assertEqual(normalized, {
+            "experience": ["1-3年"],
+            "industry": ["200002"],
+        })
+        self.assertNotIn("sortType", build_boss_filter_query(normalized))
 
     def test_list_script_targets_job_card_wrap(self):
         self.assertIn(".job-card-wrap", JS_EXTRACT_LIST)

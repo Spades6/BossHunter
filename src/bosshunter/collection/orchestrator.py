@@ -15,7 +15,7 @@ from bosshunter.collection.models import (
     PlatformCollectionRequest,
     PlatformCollectionResult,
 )
-from bosshunter.collection.platforms.boss import BossCollector
+from bosshunter.collection.platforms.boss import BossCollector, normalize_boss_search_filters
 from bosshunter.collection.platforms.job51 import Job51Collector, get_51job_city_code
 from bosshunter.collection.platforms.zhilian import ZhilianCollector, get_zhilian_city_code
 from bosshunter.collection.registry import CollectorRegistry
@@ -91,6 +91,7 @@ def normalize_collection_options(config: dict[str, Any], raw_options: dict[str, 
             } if isinstance(base.get("city_codes"), dict) else {},
             "max_pages": base.get("max_pages", 3 if platform == "boss" else 1),
             "sort": str(base.get("sort") or ("newest" if platform == "boss" else "default")),
+            "filters": normalize_boss_search_filters(base.get("filters")) if platform == "boss" else {},
         }
 
     order = supplied.get("platform_order")
@@ -182,6 +183,7 @@ def validate_collection_options(options: dict[str, Any]) -> dict[str, Any]:
             "city_codes": city_codes,
             "max_pages": max_pages,
             "sort": sort,
+            "filters": normalize_boss_search_filters(value.get("filters")) if platform == "boss" else {},
         }
     return normalized
 

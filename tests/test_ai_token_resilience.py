@@ -881,6 +881,33 @@ class GreeterTokenResilienceTests(unittest.TestCase):
         update_status.assert_called_once_with(db, "review-format", "ready")
         self.assertTrue(any("质量检查返回格式无法识别" in message for message in logs))
 
+    def test_existing_greeting_is_preserved_and_marked_ready(self):
+        db = MagicMock()
+        existing = {**_job("existing"), "greeting": "人工编辑后的招呼语"}
+        new_job = _job("new")
+        logs: list[str] = []
+        config = {
+            "ai": {"greeting_max_iterations": 0},
+            "_workbench_log": logs.append,
+        }
+
+        with (
+            patch("bosshunter.ai.greeter.get_db", return_value=db),
+            patch("bosshunter.ai.greeter.get_jobs_by_status", return_value=[existing, new_job]),
+            patch("bosshunter.ai.greeter._get_resume_summary", return_value="真实简历摘要"),
+            patch("bosshunter.ai.greeter._call_claude", return_value="新生成的招呼语") as call_ai,
+            patch("bosshunter.ai.greeter.update_job_greeting") as update_greeting,
+            patch("bosshunter.ai.greeter.update_job_status") as update_status,
+        ):
+            count = greeter.generate_greetings(config)
+
+        self.assertEqual(count, 1)
+        call_ai.assert_called_once()
+        update_greeting.assert_called_once_with(db, "new", "新生成的招呼语")
+        self.assertIn((db, "existing", "ready"), [call.args for call in update_status.call_args_list])
+        self.assertEqual(config["_workbench_greeting_report"]["skipped_existing"], 1)
+        self.assertTrue(any("不会用 AI 覆盖" in message for message in logs))
+
     def test_style_guard_rewrites_even_when_model_review_is_malformed(self):
         db = MagicMock()
         jobs = [_job("style-rewrite")]
