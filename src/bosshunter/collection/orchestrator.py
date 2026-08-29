@@ -160,13 +160,15 @@ def validate_collection_options(options: dict[str, Any]) -> dict[str, Any]:
                 names = "、".join(missing_cities)
                 raise ValueError(f"智联暂未内置城市编码：{names}；请换用采集窗口提供的城市名称，不能填写 BOSS 编码")
         if platform == "51job":
+            unsupported_cities: list[str] = []
             for city in cities:
                 resolved = get_51job_city_code(city)
                 if resolved:
                     city_codes[city] = resolved
-            missing_cities = [city for city in cities if not city_codes.get(city)]
-            if missing_cities:
-                names = "、".join(missing_cities)
+                else:
+                    unsupported_cities.append(city)
+            if unsupported_cities:
+                names = "、".join(unsupported_cities)
                 raise ValueError(f"51job 当前只开放已验证城市：{names} 尚未支持；不会猜测城市编码")
         try:
             max_pages = int(value.get("max_pages", 3))
