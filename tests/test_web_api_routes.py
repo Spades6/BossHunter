@@ -1474,6 +1474,26 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertEqual(task.metrics["send_success"], 1)
         self.assertEqual(task.metrics["send_deferred"], 1)
 
+    def test_deliver_counts_preserved_greetings_as_ready(self):
+        task = WorkbenchTask(id="preserved-greeting", mode="deliver", label="投递")
+        config = {"_workbench_job_ids": ["job-a", "job-b", "job-c"]}
+
+        def fake_generate(greeting_config):
+            greeting_config["_workbench_greeting_report"] = {"skipped_existing": 1}
+            return 1
+
+        def fake_send(send_config, force=False):
+            send_config["_workbench_send_report"] = {"sent_count": 2}
+            return 2
+
+        with patch("bosshunter.ai.greeter.generate_greetings", side_effect=fake_generate), \
+             patch("bosshunter.executor.sender.send_greetings", side_effect=fake_send):
+            server._execute_deliver(task, config)
+
+        self.assertIn("招呼语准备完成：2/3（新生成 1）", task.logs)
+        self.assertTrue(any("1 个岗位未生成招呼语" in message for message in task.logs))
+        self.assertFalse(any("2 个岗位未生成招呼语" in message for message in task.logs))
+
     def test_deliver_still_stops_on_account_risk_signal(self):
         # Arrange
         task = WorkbenchTask(id="risk-delivery", mode="full", label="运行全流程")

@@ -794,11 +794,14 @@ def _execute_deliver_batch(task: WorkbenchTask, config: dict) -> None:
 	if not config.get("_workbench_skip_greeting"):
 		_log(task, "生成招呼语")
 		generated_count = generate_greetings(config)
-		_log(task, f"招呼语生成完成：{generated_count}/{len(selected_job_ids) or generated_count}")
+		greeting_report = config.get("_workbench_greeting_report", {})
+		skipped_existing = int(greeting_report.get("skipped_existing", 0) or 0)
+		ready_count = generated_count + skipped_existing
+		_log(task, f"招呼语准备完成：{ready_count}/{len(selected_job_ids) or ready_count}（新生成 {generated_count}）")
 		if task.stop_requested.is_set():
 			return
-		if selected_job_ids and generated_count < len(selected_job_ids):
-			missing_count = len(selected_job_ids) - generated_count
+		if selected_job_ids and ready_count < len(selected_job_ids):
+			missing_count = len(selected_job_ids) - ready_count
 			# 生成失败的岗位保留为待生成且无招呼语文本，本就不会进入发送；其余岗位继续走
 			# 现有人工确认、发送窗口与风控规则（#101 回归：不再因部分失败放弃整个批次）。
 			_log(
