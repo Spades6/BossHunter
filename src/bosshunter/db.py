@@ -537,19 +537,32 @@ def save_generated_greeting(
     greeting: str,
     *,
     expected_greeting: str = "",
+    expected_status: str = "",
 ) -> bool:
-    """Atomically save generated text without reviving or overwriting a newer snapshot."""
+    """Atomically save generated text without reviving or overwriting a newer snapshot.
+
+    ``expected_status`` additionally pins the status observed when the job was read,
+    so an allowed-status transition (e.g. approved -> error) between read and write
+    is rejected instead of silently reviving the job to ready.
+    """
     status_sql, status_params = _status_placeholders(GREETING_ALLOWED_STATUSES)
+    conditions = [
+        "id = ?",
+        "deleted_at IS NULL",
+        f"status IN ({status_sql})",
+        "COALESCE(greeting, '') = ?",
+    ]
+    params: list[Any] = [greeting, job_id, *status_params, expected_greeting]
+    if expected_status:
+        conditions.append("status = ?")
+        params.append(expected_status)
     cursor = conn.execute(
         f"""
         UPDATE jobs
         SET greeting = ?, status = 'ready', updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-          AND deleted_at IS NULL
-          AND status IN ({status_sql})
-          AND COALESCE(greeting, '') = ?
+        WHERE {' AND '.join(conditions)}
         """,
-        (greeting, job_id, *status_params, expected_greeting),
+        params,
     )
     conn.commit()
     return cursor.rowcount == 1

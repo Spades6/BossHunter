@@ -936,6 +936,7 @@ class WebApiRouteTests(unittest.TestCase):
 
         with (
             patch("bosshunter.ai.greeter.generate_greetings", return_value=1) as generate,
+            patch("bosshunter.ai.greeter._get_resume_summary", return_value="简历摘要"),
             patch("bosshunter.executor.sender.send_greetings", return_value=1) as send,
         ):
             server._execute_deliver_batch(task, config)
@@ -1497,6 +1498,7 @@ class WebApiRouteTests(unittest.TestCase):
 
         # Act: a partial result must not raise and abort the full workflow.
         with patch("bosshunter.ai.greeter.generate_greetings", return_value=3), \
+        patch("bosshunter.ai.greeter._get_resume_summary", return_value="简历摘要"), \
              patch("bosshunter.executor.sender.send_greetings", side_effect=fake_send):
             server._execute_deliver(task, config)
 
@@ -1521,6 +1523,7 @@ class WebApiRouteTests(unittest.TestCase):
             return 2
 
         with patch("bosshunter.ai.greeter.generate_greetings", side_effect=fake_generate), \
+        patch("bosshunter.ai.greeter._get_resume_summary", return_value="简历摘要"), \
              patch("bosshunter.executor.sender.send_greetings", side_effect=fake_send):
             server._execute_deliver(task, config)
 
@@ -1545,6 +1548,7 @@ class WebApiRouteTests(unittest.TestCase):
 
         # Act / Assert
         with patch("bosshunter.ai.greeter.generate_greetings", return_value=2), \
+        patch("bosshunter.ai.greeter._get_resume_summary", return_value="简历摘要"), \
              patch("bosshunter.executor.sender.send_greetings", side_effect=fake_send), \
              self.assertRaisesRegex(RuntimeError, "验证码"):
             server._execute_deliver(task, config)
@@ -1762,6 +1766,7 @@ class WebApiRouteTests(unittest.TestCase):
             server.set_base_dir(base_dir)
 
             with patch("bosshunter.ai.greeter.generate_greetings", side_effect=fake_generate), \
+            patch("bosshunter.ai.greeter._get_resume_summary", return_value="简历摘要"), \
                  patch.object(server, "load_config", return_value={}), \
                  patch.object(server, "task_runner", runner):
                 status, _, body = self._request(
@@ -1838,6 +1843,7 @@ class WebApiRouteTests(unittest.TestCase):
             server.set_base_dir(base_dir)
 
             with patch("bosshunter.ai.greeter.generate_greetings", side_effect=failing_generate), \
+            patch("bosshunter.ai.greeter._get_resume_summary", return_value="简历摘要"), \
                  patch.object(server, "load_config", return_value={}), \
                  patch.object(server, "task_runner", runner):
                 status, _, body = self._request(
@@ -1889,6 +1895,7 @@ class WebApiRouteTests(unittest.TestCase):
             server.set_base_dir(base_dir)
 
             with patch("bosshunter.ai.greeter.generate_greetings", side_effect=paused_generate), \
+            patch("bosshunter.ai.greeter._get_resume_summary", return_value="简历摘要"), \
                  patch.object(server, "load_config", return_value={}), \
                  patch.object(server, "task_runner", runner):
                 status, _, body = self._request(
@@ -1935,6 +1942,7 @@ class WebApiRouteTests(unittest.TestCase):
             server.set_base_dir(base_dir)
 
             with patch("bosshunter.ai.greeter.generate_greetings", side_effect=partial_paused_generate), \
+            patch("bosshunter.ai.greeter._get_resume_summary", return_value="简历摘要"), \
                  patch.object(server, "load_config", return_value={}), \
                  patch.object(server, "task_runner", runner):
                 status, _, body = self._request(
@@ -1954,6 +1962,68 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertEqual(result["metrics"]["greet_pause_reason"], "API 请求被限流 (rate_limit)")
         self.assertTrue(any("本轮提前结束" in message for message in result["logs"]))
         self.assertTrue(any("rate_limit" in message for message in result["logs"]))
+
+    def test_greet_task_fails_fast_without_resume(self):
+        # 审计 P1 回归：缺简历属于配置阻断，任务必须 failed 并携带原因，不得伪装成 completed。
+        runner = WorkbenchTaskRunner({"greet": server._execute_greet})
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("greet-no-resume"))
+                update_job_status(db, "greet-no-resume", "ready")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            with patch("bosshunter.ai.greeter._get_resume_summary", return_value=""), \
+                 patch("bosshunter.ai.greeter.generate_greetings") as generate, \
+                 patch.object(server, "load_config", return_value={}), \
+                 patch.object(server, "task_runner", runner):
+                status, _, body = self._request(
+                    "/api/workbench/greetings",
+                    method="POST",
+                    json_body={"job_ids": ["greet-no-resume"]},
+                )
+            runner.wait(timeout=2)
+            result = runner.status()["last_task"]
+
+        payload = json.loads(body)
+        self.assertTrue(status.startswith("200"), payload)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("无法读取简历", result["error"])
+        generate.assert_not_called()
+
+    def test_save_generated_greeting_rejects_allowed_status_transition(self):
+        # 审计 P2 回归：approved→error 等允许状态间的并发变化必须拒绝，不能写回 ready。
+        with tempfile.TemporaryDirectory() as tmp:
+            db = get_db(Path(tmp) / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("cas-transition"))
+                update_job_status(db, "cas-transition", "approved")
+                # 模拟读取（approved）之后、写入之前状态被并发改为 error
+                update_job_status(db, "cas-transition", "error")
+
+                self.assertFalse(
+                    save_generated_greeting(
+                        db, "cas-transition", "AI 新招呼语", expected_status="approved"
+                    )
+                )
+                row = db.execute(
+                    "SELECT greeting, status FROM jobs WHERE id = 'cas-transition'"
+                ).fetchone()
+                self.assertIsNone(row["greeting"])
+                self.assertEqual(row["status"], "error")
+
+                # 不传 expected_status 维持旧行为：允许集合内仍可写入
+                self.assertTrue(save_generated_greeting(db, "cas-transition", "AI 新招呼语"))
+                row = db.execute(
+                    "SELECT greeting, status FROM jobs WHERE id = 'cas-transition'"
+                ).fetchone()
+                self.assertEqual(row["greeting"], "AI 新招呼语")
+                self.assertEqual(row["status"], "ready")
+            finally:
+                db.close()
 
     def test_web_api_greeting_generation_reports_conflict_ids_on_cas_failure(self):
         def fake_generate(config, job_ids=None):
@@ -1978,6 +2048,7 @@ class WebApiRouteTests(unittest.TestCase):
             server.set_base_dir(base_dir)
 
             with patch("bosshunter.ai.greeter.generate_greetings", side_effect=fake_generate), \
+            patch("bosshunter.ai.greeter._get_resume_summary", return_value="简历摘要"), \
                  patch.object(server, "load_config", return_value={}), \
                  patch.object(server, "task_runner", runner):
                 status, _, body = self._request(
@@ -2022,6 +2093,7 @@ class WebApiRouteTests(unittest.TestCase):
             server.set_base_dir(base_dir)
 
             with patch("bosshunter.ai.greeter.generate_greetings", side_effect=fake_generate), \
+            patch("bosshunter.ai.greeter._get_resume_summary", return_value="简历摘要"), \
                  patch.object(server, "load_config", return_value={}), \
                  patch.object(server, "task_runner", runner):
                 status, _, body = self._request(

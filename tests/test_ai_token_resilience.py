@@ -1077,6 +1077,58 @@ class GreeterTokenResilienceTests(unittest.TestCase):
         self.assertIn("quota", pause_reason)
         update_greeting.assert_not_called()
 
+    def test_missing_resume_records_pause_reason(self):
+        # 审计 P1 回归：缺简历必须写入 pause_reason，供后台任务按零产出失败语义上报。
+        db = MagicMock()
+        config = {"ai": {"greeting_max_iterations": 0}}
+
+        with (
+            patch("bosshunter.ai.greeter.get_db", return_value=db),
+            patch("bosshunter.ai.greeter.get_jobs_by_status", return_value=[_job("no-resume")]),
+            patch("bosshunter.ai.greeter._get_resume_summary", return_value=""),
+        ):
+            count = greeter.generate_greetings(config)
+
+        self.assertEqual(count, 0)
+        self.assertIn("无法读取简历", config["_workbench_greeting_report"].get("pause_reason", ""))
+
+    def test_preserve_failure_reports_conflict(self):
+        # 审计 P2 回归：mark_existing_greeting_ready CAS 失败必须计入 conflict_ids，不得静默。
+        db = MagicMock()
+        existing = _job("preserve-conflict")
+        existing["status"] = "ready"
+        existing["greeting"] = "已有招呼语"
+        config = {"ai": {}}
+
+        with (
+            patch("bosshunter.ai.greeter.get_db", return_value=db),
+            patch("bosshunter.ai.greeter.get_jobs_by_status", return_value=[existing]),
+            patch("bosshunter.ai.greeter.mark_existing_greeting_ready", return_value=False) as mark,
+            patch("bosshunter.ai.greeter._notify"),
+        ):
+            count = greeter.generate_greetings(config)
+
+        report = config["_workbench_greeting_report"]
+        self.assertEqual(count, 0)
+        self.assertEqual(report["conflict_ids"], ["preserve-conflict"])
+        self.assertEqual(report["skipped_existing"], 0)
+        mark.assert_called_once()
+
+    def test_empty_job_ids_list_processes_nothing(self):
+        # 审计 P3 回归：显式传入空列表 = 处理零个岗位，不得退回"全部 approved"。
+        db = MagicMock()
+        config = {"ai": {}}
+
+        with (
+            patch("bosshunter.ai.greeter.get_db", return_value=db),
+            patch("bosshunter.ai.greeter.get_jobs_by_status") as by_status,
+        ):
+            count = greeter.generate_greetings(config, job_ids=[])
+
+        self.assertEqual(count, 0)
+        by_status.assert_not_called()
+        self.assertEqual(config["_workbench_greeting_report"]["requested_count"], 0)
+
     def test_greeting_json_wrapper_is_normalized(self):
         response = '```json\n{"greeting":"您好，我的产品经验与岗位需求比较匹配。"}\n```'
 
@@ -1125,6 +1177,7 @@ class GreeterTokenResilienceTests(unittest.TestCase):
             db,
             "review-format",
             "这是一条可用的个性化招呼语。",
+            expected_status="approved",
         )
         self.assertTrue(any("质量检查返回格式无法识别" in message for message in logs))
 
@@ -1150,7 +1203,7 @@ class GreeterTokenResilienceTests(unittest.TestCase):
 
         self.assertEqual(count, 1)
         call_ai.assert_called_once()
-        update_greeting.assert_called_once_with(db, "new", "新生成的招呼语")
+        update_greeting.assert_called_once_with(db, "new", "新生成的招呼语", expected_status="approved")
         mark_ready.assert_called_once_with(
             db,
             "existing",
@@ -1187,6 +1240,7 @@ class GreeterTokenResilienceTests(unittest.TestCase):
             db,
             "style-rewrite",
             "复杂流程先理清异常边界更重要，我有相关需求梳理经验，可以交流下具体场景。",
+            expected_status="approved",
         )
 
     def test_empty_greeting_retries_before_leaving_job_pending(self):
@@ -1219,6 +1273,7 @@ class GreeterTokenResilienceTests(unittest.TestCase):
             db,
             "retry-empty",
             "第二次生成成功的个性化招呼语",
+            expected_status="approved",
         )
         add_history.assert_not_called()
 
@@ -1253,6 +1308,7 @@ class GreeterTokenResilienceTests(unittest.TestCase):
             db,
             "1",
             "这是一条已经可以使用的个性化招呼语。",
+            expected_status="approved",
         )
         self.assertTrue(any("安全暂停" in message and "已生成内容已保存" in message for message in logs))
 
@@ -1341,7 +1397,7 @@ class GreeterTokenResilienceTests(unittest.TestCase):
 
         self.assertEqual(count, 1)
         self.assertEqual(call_ai.call_count, 2)
-        update_greeting.assert_called_once_with(db, "empty-retry", "第二次生成成功的个性化招呼语")
+        update_greeting.assert_called_once_with(db, "empty-retry", "第二次生成成功的个性化招呼语", expected_status="approved")
         add_history.assert_not_called()
 
     def test_persistent_empty_response_fails_job_and_continues_batch(self):
@@ -1373,7 +1429,7 @@ class GreeterTokenResilienceTests(unittest.TestCase):
 
         self.assertEqual(count, 1)
         self.assertEqual(call_ai.call_count, 3)
-        update_greeting.assert_called_once_with(db, "2", "岗位2的个性化招呼语")
+        update_greeting.assert_called_once_with(db, "2", "岗位2的个性化招呼语", expected_status="approved")
         add_history.assert_called_once_with(db, "1", "greeting_failed", "AI 未返回完整招呼语，岗位保留为待生成")
         self.assertTrue(any("已跳过 公司 1｜AI 产品经理 1" in message for message in logs))
         self.assertFalse(any("安全暂停" in message for message in logs))
@@ -1397,7 +1453,7 @@ class GreeterTokenResilienceTests(unittest.TestCase):
             count = greeter.generate_greetings(config)
 
         self.assertEqual(count, 0)
-        save_greeting.assert_called_once_with(db, "status-race", "已生成但不应保存的招呼语")
+        save_greeting.assert_called_once_with(db, "status-race", "已生成但不应保存的招呼语", expected_status="approved")
         self.assertTrue(any("岗位状态已变更，招呼语未保存" in message for message in logs))
         self.assertEqual(
             config["_workbench_greeting_report"]["conflict_ids"], ["status-race"]
@@ -1429,6 +1485,7 @@ class GreeterTokenResilienceTests(unittest.TestCase):
             "regenerate-existing",
             "重新生成的招呼语",
             expected_greeting="旧招呼语",
+            expected_status="error",
         )
 
     def test_job_ids_filter_excludes_scored_status_before_ai_call(self):
@@ -1452,7 +1509,7 @@ class GreeterTokenResilienceTests(unittest.TestCase):
 
         self.assertEqual(count, 1)
         call_ai.assert_called_once()
-        save_greeting.assert_called_once_with(db, "ready-job", "只为允许状态生成")
+        save_greeting.assert_called_once_with(db, "ready-job", "只为允许状态生成", expected_status="ready")
         self.assertEqual(config["_workbench_greeting_report"]["requested_count"], 1)
 
     def test_review_empty_response_keeps_draft_and_continues_batch(self):
@@ -1481,8 +1538,8 @@ class GreeterTokenResilienceTests(unittest.TestCase):
 
         self.assertEqual(count, 2)
         self.assertEqual(call_ai.call_count, 4)
-        update_greeting.assert_any_call(db, "1", "这是岗位1的个性化招呼语。")
-        update_greeting.assert_any_call(db, "2", "这是岗位2的个性化招呼语。")
+        update_greeting.assert_any_call(db, "1", "这是岗位1的个性化招呼语。", expected_status="approved")
+        update_greeting.assert_any_call(db, "2", "这是岗位2的个性化招呼语。", expected_status="approved")
         self.assertTrue(any("质量检查未返回内容，已保留可用招呼语并继续" in message for message in logs))
         self.assertFalse(any("安全暂停" in message for message in logs))
 

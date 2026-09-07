@@ -841,12 +841,17 @@ def _execute_deliver_batch(task: WorkbenchTask, config: dict) -> None:
 
 
 def _execute_greet(task: WorkbenchTask, config: dict) -> None:
-	from bosshunter.ai.greeter import generate_greetings
+	from bosshunter.ai.greeter import _get_resume_summary, generate_greetings
 
 	config = dict(config)
 	config["_workbench_stop_event"] = task.stop_requested
 	config["_workbench_log"] = lambda message: _log(task, message)
 	selected_job_ids = [str(job_id) for job_id in config.get("_workbench_job_ids", []) if str(job_id)]
+	# 启动前预检简历：缺简历属于配置阻断，直接让任务失败并携带原因，
+	# 而不是进入生成流程后静默返回 0、被误报为 completed。
+	if not _get_resume_summary(config):
+		_log(task, "无法读取简历，任务未启动：请先在配置面板上传简历后重试")
+		raise RuntimeError("无法读取简历：请先在配置面板上传简历后重试")
 	_log(task, f"开始为 {len(selected_job_ids)} 个岗位生成招呼语")
 	generated_count = generate_greetings(config, job_ids=selected_job_ids)
 	report = config.get("_workbench_greeting_report", {})

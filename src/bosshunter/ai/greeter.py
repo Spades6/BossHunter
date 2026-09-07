@@ -631,7 +631,9 @@ def generate_greetings(config: dict, job_ids: list[str] | None = None) -> int:
     generate greetings for pending-confirmation jobs without sending them.
     """
     db = get_db()
-    if job_ids:
+    if job_ids is None:
+        jobs = get_jobs_by_status(db, "approved")
+    elif job_ids:
         placeholders = ",".join("?" for _ in job_ids)
         rows = db.execute(
             f"SELECT * FROM jobs WHERE deleted_at IS NULL AND id IN ({placeholders}) ORDER BY score DESC",
@@ -639,7 +641,8 @@ def generate_greetings(config: dict, job_ids: list[str] | None = None) -> int:
         ).fetchall()
         jobs = [dict(row) for row in rows]
     else:
-        jobs = get_jobs_by_status(db, "approved")
+        # 显式传入空列表 = 不处理任何岗位，而不是退回"全部 approved"。
+        jobs = []
     _workbench_job_ids = {str(job_id) for job_id in config.get("_workbench_job_ids", [])}
     if _workbench_job_ids:
         jobs = [job for job in jobs if str(job["id"]) in _workbench_job_ids]
@@ -681,6 +684,13 @@ def generate_greetings(config: dict, job_ids: list[str] | None = None) -> int:
             expected_greeting=str(job.get("greeting") or ""),
         ):
             preserved_existing += 1
+        else:
+            # CAS 失败必须上报为冲突：岗位状态或招呼语在读取后已变更，不能静默丢失。
+            config["_workbench_greeting_report"].setdefault("conflict_ids", []).append(str(job["id"]))
+            _notify(
+                config,
+                f"{job['company']}｜{job['title']} 的状态或招呼语已变更，保留操作未执行。",
+            )
     config["_workbench_greeting_report"]["skipped_existing"] = preserved_existing
     if preserved_existing:
         _notify(config, f"已保留 {preserved_existing} 个岗位现有的招呼语，不会用 AI 覆盖。")
@@ -694,6 +704,9 @@ def generate_greetings(config: dict, job_ids: list[str] | None = None) -> int:
     resume_summary = _get_resume_summary(config)
     if not resume_summary:
         console.print("[red]无法读取简历[/red]")
+        # 缺简历属于服务级阻断：写入 pause_reason 让后台任务按零产出失败语义上报，
+        # 而不是伪装成"完成，产出 0"。
+        config["_workbench_greeting_report"]["pause_reason"] = "无法读取简历：请先在配置面板上传简历后重试"
         db.close()
         return 0
     graduation_context = _parse_graduation_context(resume_summary)
@@ -830,6 +843,7 @@ def generate_greetings(config: dict, job_ids: list[str] | None = None) -> int:
                 if force_regenerate
                 else {}
             )
+            save_kwargs["expected_status"] = str(job.get("status") or "approved")
             if not save_generated_greeting(db, job["id"], best_greeting, **save_kwargs):
                 config["_workbench_greeting_report"].setdefault("conflict_ids", []).append(str(job["id"]))
                 _notify(

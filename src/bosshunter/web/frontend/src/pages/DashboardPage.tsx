@@ -1118,6 +1118,7 @@ function JobActionCard({ job, selected, onToggle, onDetail, onReject }: { job: J
 
 function JobDetailModal({ job, onClose, onChanged }: { job: Job; onClose: () => void; onChanged?: () => void }) {
   const [greeting, setGreeting] = useState(job.greeting || '')
+  const [savedGreeting, setSavedGreeting] = useState(job.greeting || '')
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [regenerating, setRegenerating] = useState(false)
@@ -1141,6 +1142,7 @@ function JobDetailModal({ job, onClose, onChanged }: { job: Job; onClose: () => 
         throw new Error(data.error || '保存失败')
       }
       setEditing(false)
+      setSavedGreeting(text)
       setNotice('招呼语已保存')
       onChanged?.()
     } catch (err) {
@@ -1170,6 +1172,7 @@ function JobDetailModal({ job, onClose, onChanged }: { job: Job; onClose: () => 
         if (detailRes.ok) {
           const detail = await detailRes.json()
           setGreeting(detail.greeting || '')
+          setSavedGreeting(detail.greeting || '')
         }
         onChanged?.()
         setNotice('生成时间较长，任务仍在后台运行，稍后刷新查看结果。')
@@ -1191,6 +1194,7 @@ function JobDetailModal({ job, onClose, onChanged }: { job: Job; onClose: () => 
       if (detailRes.ok) {
         const detail = await detailRes.json()
         setGreeting(detail.greeting || '')
+        setSavedGreeting(detail.greeting || '')
       }
       setNotice('已重新生成招呼语')
       onChanged?.()
@@ -1231,7 +1235,7 @@ function JobDetailModal({ job, onClose, onChanged }: { job: Job; onClose: () => 
               {editing ? (
                 <>
                   <Button size="sm" disabled={saving} onClick={saveGreeting}>{saving ? '保存中...' : '保存'}</Button>
-                  <Button size="sm" variant="secondary" onClick={() => { setEditing(false); setGreeting(job.greeting || '') }}>取消</Button>
+                  <Button size="sm" variant="secondary" onClick={() => { setEditing(false); setGreeting(savedGreeting) }}>取消</Button>
                 </>
               ) : (
                 <>
