@@ -1441,7 +1441,9 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertFalse(task.context["waiting_confirmation"])
         self.assertTrue(task.context["confirmation_complete"])
 
-    def test_full_task_sends_previous_confirmed_backlog_before_collecting(self):
+    def test_full_task_skips_backlog_without_confirmation(self):
+        # Codex 审计 P1 后的新契约：ready 积压代表"生成过草稿"而非"确认过投递"，
+        # 没有待确认岗位时全流程不得自动发送积压，只提示走「直接发送」人工路径。
         # Arrange
         calls = []
         task = WorkbenchTask(id="backlog-first", mode="full", label="运行全流程")
@@ -1475,18 +1477,15 @@ class WebApiRouteTests(unittest.TestCase):
                 server._execute_full(task, {})
 
         # Assert
-        self.assertEqual(
-            calls,
-            [("deliver", ["deferred-ready"], True, 40), "collect"],
-        )
-        self.assertIn("优先续发上次已确认但未完成的 1 个岗位", task.logs)
+        self.assertEqual(calls, ["collect"])
+        self.assertTrue(any("未经人工确认不会自动发送" in message for message in task.logs))
 
     def test_deliver_keeps_partial_result_and_continues_after_single_failure(self):
         # Arrange
         task = WorkbenchTask(id="partial-delivery", mode="full", label="运行全流程")
         config = {"_workbench_job_ids": ["job-a", "job-b", "job-c"]}
 
-        def fake_send(send_config, force=False):
+        def fake_send(send_config, force=False, db_path=None):
             send_config["_workbench_send_report"] = {
                 "sent_count": 1,
                 "failed_count": 1,
@@ -1514,11 +1513,11 @@ class WebApiRouteTests(unittest.TestCase):
         task = WorkbenchTask(id="preserved-greeting", mode="deliver", label="投递")
         config = {"_workbench_job_ids": ["job-a", "job-b", "job-c"]}
 
-        def fake_generate(greeting_config):
+        def fake_generate(greeting_config, job_ids=None, db_path=None):
             greeting_config["_workbench_greeting_report"] = {"skipped_existing": 1}
             return 1
 
-        def fake_send(send_config, force=False):
+        def fake_send(send_config, force=False, db_path=None):
             send_config["_workbench_send_report"] = {"sent_count": 2}
             return 2
 
@@ -1536,7 +1535,7 @@ class WebApiRouteTests(unittest.TestCase):
         task = WorkbenchTask(id="risk-delivery", mode="full", label="运行全流程")
         config = {"_workbench_job_ids": ["job-a", "job-b"]}
 
-        def fake_send(send_config, force=False):
+        def fake_send(send_config, force=False, db_path=None):
             send_config["_workbench_send_report"] = {
                 "sent_count": 0,
                 "failed_count": 1,
@@ -2101,6 +2100,104 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertTrue(status.startswith("409"), body)
         self.assertEqual(payload["code"], "greeting_edit_busy")
         self.assertEqual(row["greeting"], "原招呼语")
+
+    def test_greeting_edit_blocked_while_monitor_task_active(self):
+        # Codex 审计 P2 回归：monitor 任务内部也会发送，编辑拦截集合必须覆盖 monitor。
+        active_task = WorkbenchTask(id="active-monitor", mode="monitor", label="单独监测")
+        runner = WorkbenchTaskRunner()
+        runner._tasks[active_task.id] = active_task
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("edit-monitor-busy"))
+                update_job_greeting(db, "edit-monitor-busy", "原招呼语")
+                update_job_status(db, "edit-monitor-busy", "ready")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            with patch.object(server, "task_runner", runner):
+                status, _, body = self._request(
+                    "/api/jobs/edit-monitor-busy/greeting",
+                    method="POST",
+                    json_body={"greeting": "监测期间的新文本"},
+                )
+
+        payload = json.loads(body)
+        self.assertTrue(status.startswith("409"), body)
+        self.assertEqual(payload["code"], "greeting_edit_busy")
+
+    def test_full_flow_does_not_auto_send_ready_drafts_without_confirmation(self):
+        # Codex 审计 P1 回归：只生成过草稿（ready）未经确认，全流程启动不得自动发送积压。
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("draft-only"))
+                update_job_greeting(db, "draft-only", "未确认的草稿招呼语")
+                update_job_status(db, "draft-only", "ready")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            task = WorkbenchTask(id="full-draft", mode="full", label="运行全流程")
+            with patch.object(server, "_execute_collect"), \
+                 patch.object(server, "_execute_deliver") as deliver, \
+                 patch.object(server, "_execute_monitor"):
+                server._execute_full(task, {"scoring": {"threshold": 71}})
+
+        deliver.assert_not_called()
+        self.assertTrue(any("未经人工确认不会自动发送" in message for message in task.logs))
+
+    def test_full_flow_defers_backlog_delivery_until_confirmed(self):
+        # Codex 审计 P1 回归：积压续发必须发生在人工确认门通过之后，且顺序为先积压后新批次。
+        from threading import Thread
+        from time import sleep, time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("draft-ready"))
+                update_job_greeting(db, "draft-ready", "草稿招呼语")
+                update_job_status(db, "draft-ready", "ready")
+                insert_job(db, _job("pending-new"))
+                update_job_score(db, "pending-new", 90, "匹配")
+                update_job_status(db, "pending-new", "approved")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            task = WorkbenchTask(id="full-backlog", mode="full", label="运行全流程")
+            with patch.object(server, "_execute_collect"), \
+                 patch.object(server, "_execute_deliver") as deliver, \
+                 patch.object(server, "_wait_for_collection_delivery_cooldown", return_value=False), \
+                 patch.object(server, "_execute_monitor"):
+                thread = Thread(target=server._execute_full, args=(task, {"scoring": {"threshold": 71}}), daemon=True)
+                thread.start()
+                deadline = time() + 3
+                while time() < deadline and not task.context.get("waiting_confirmation"):
+                    sleep(0.02)
+                self.assertTrue(task.context.get("waiting_confirmation"), task.logs)
+                # 确认门通过之前：积压与批次均不得发送
+                self.assertEqual(deliver.call_count, 0)
+                task.context["confirmed_job_ids"] = ["pending-new"]
+                task.context["confirmation_event"].set()
+                thread.join(timeout=3)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(deliver.call_count, 2)
+        self.assertEqual(
+            deliver.call_args_list[0].args[1]["_workbench_job_ids"],
+            ["draft-ready"],
+        )
+        self.assertTrue(deliver.call_args_list[0].args[1]["_workbench_skip_greeting"])
+        self.assertEqual(
+            deliver.call_args_list[1].args[1]["_workbench_job_ids"],
+            ["pending-new"],
+        )
 
     def test_greet_task_pins_runtime_database_path(self):
         # Codex 审计 P2 回归：后台生成必须使用面板运行时数据库，而非 CWD 相对默认库。

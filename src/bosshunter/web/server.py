@@ -556,19 +556,14 @@ def _execute_monitor(task: WorkbenchTask, config: dict, *, initial_cooldown: boo
 
 
 def _execute_full(task: WorkbenchTask, config: dict) -> None:
+	# Codex 审计 P1：ready 草稿只代表"生成过文案"，不代表"确认过投递"。
+	# 积压续发必须推迟到人工确认门通过之后执行（见 confirmation_event 之后），
+	# 启动阶段绝不能把未确认草稿当作已确认积压自动发送。
 	db = _get_web_db()
 	try:
 		deferred_job_ids = [str(job["id"]) for job in get_jobs_ready_to_send(db)]
 	finally:
 		db.close()
-	if deferred_job_ids:
-		_log(task, f"优先续发上次已确认但未完成的 {len(deferred_job_ids)} 个岗位")
-		deferred_config = load_config(CONFIG_PATH)
-		deferred_config["_workbench_job_ids"] = deferred_job_ids
-		deferred_config["_workbench_skip_greeting"] = True
-		_execute_deliver(task, deferred_config)
-		if task.stop_requested.is_set():
-			return
 
 	full_collection_config = dict(config)
 	try:
@@ -601,6 +596,12 @@ def _execute_full(task: WorkbenchTask, config: dict) -> None:
 	if not pending_confirmation:
 		task.context["waiting_confirmation"] = False
 		task.context["confirmation_complete"] = True
+		if deferred_job_ids:
+			_log(
+				task,
+				f"检测到 {len(deferred_job_ids)} 个「待发送招呼语」积压：未经人工确认不会自动发送，"
+				"请在「待发送招呼语」区逐项确认后使用「直接发送」。",
+			)
 		_log(task, "没有待确认岗位，流程结束")
 		return
 
@@ -614,6 +615,16 @@ def _execute_full(task: WorkbenchTask, config: dict) -> None:
 		pass
 	if task.stop_requested.is_set():
 		return
+
+	# 人工确认已通过：此时才允许续发"待发送招呼语"积压（确认门之前绝不自动发送）。
+	if deferred_job_ids:
+		_log(task, f"确认完成，续发上次「待发送招呼语」积压 {len(deferred_job_ids)} 个岗位")
+		deferred_config = load_config(CONFIG_PATH)
+		deferred_config["_workbench_job_ids"] = deferred_job_ids
+		deferred_config["_workbench_skip_greeting"] = True
+		_execute_deliver(task, deferred_config)
+		if task.stop_requested.is_set():
+			return
 
 	job_ids = [str(job_id) for job_id in task.context.get("confirmed_job_ids", []) if str(job_id)]
 	task.context["waiting_confirmation"] = False
@@ -776,7 +787,7 @@ def _execute_deliver_batch(task: WorkbenchTask, config: dict) -> None:
 	selected_job_ids = [str(job_id) for job_id in config.get("_workbench_job_ids", []) if str(job_id)]
 	if not config.get("_workbench_skip_greeting"):
 		_log(task, "生成招呼语")
-		generated_count = generate_greetings(config)
+		generated_count = generate_greetings(config, db_path=DATA_DIR / "bosshunter.db")
 		greeting_report = config.get("_workbench_greeting_report", {})
 		skipped_existing = int(greeting_report.get("skipped_existing", 0) or 0)
 		ready_count = generated_count + skipped_existing
@@ -795,8 +806,9 @@ def _execute_deliver_batch(task: WorkbenchTask, config: dict) -> None:
 	_log(task, "发送招呼语")
 	# The workbench must obey the same send window and day-off guard as the CLI.
 	# ``force`` remains an explicit CLI-only override and is never implied by a
-	# browser button click.
-	sent_count = send_greetings(config, force=False)
+	# browser button click. Both generation and delivery pin the runtime database
+	# so a non-CWD base dir can never split reads/writes across two SQLite files.
+	sent_count = send_greetings(config, force=False, db_path=DATA_DIR / "bosshunter.db")
 	report = config.get("_workbench_send_report", {})
 	failed_count = int(report.get("failed_count", 0) or 0)
 	deferred_count = int(report.get("deferred_count", 0) or 0)
@@ -1877,16 +1889,18 @@ def api_job_update_greeting(job_id):
 		if len(greeting) > 300:
 			return _json_response({"error": "招呼语不能超过300字"}, 400)
 
-		# 投递/生成任务运行期间禁止编辑：发送器与生成器持有岗位和招呼语快照，
+		# 投递/生成/监测任务运行期间禁止编辑：发送器与生成器持有岗位和招呼语快照，
 		# 期间改写会导致平台发出旧文本而库里保存新文本（状态 CAS 防不住这类竞争）。
-		active = task_runner.status().get("active")
-		if active and active.get("mode") in {"greet", "deliver", "full"}:
-			return _json_response({
-				"error": f"「{active.get('label') or active.get('mode')}」任务运行中，请等待结束后再编辑招呼语",
-				"code": "greeting_edit_busy",
-			}, 409)
-
+		# 检查必须在 job_mutation_lock 内进行：任务启动（task_runner.start）持同一把锁，
+		# 否则检查与编辑之间仍可能插入新的投递任务（Codex 审计指出的竞争窗口）。
 		with job_mutation_lock:
+			active = task_runner.status().get("active")
+			if active and active.get("mode") in {"greet", "deliver", "full", "monitor"}:
+				return _json_response({
+					"error": f"「{active.get('label') or active.get('mode')}」任务运行中，请等待结束后再编辑招呼语",
+					"code": "greeting_edit_busy",
+				}, 409)
+
 			db = _get_web_db()
 			try:
 				row = db.execute(
