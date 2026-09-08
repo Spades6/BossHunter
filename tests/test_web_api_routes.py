@@ -1743,7 +1743,7 @@ class WebApiRouteTests(unittest.TestCase):
     def test_web_api_greeting_generation_starts_background_task_for_error_status(self):
         seen_configs: list[dict] = []
 
-        def fake_generate(config, job_ids=None):
+        def fake_generate(config, job_ids=None, db_path=None):
             seen_configs.append(dict(config))
             config["_workbench_greeting_report"] = {
                 "requested_count": 1,
@@ -1828,7 +1828,7 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertEqual(task["mode"], "collect")
 
     def test_greet_task_failure_keeps_jobs_retryable(self):
-        def failing_generate(config, job_ids=None):
+        def failing_generate(config, job_ids=None, db_path=None):
             raise RuntimeError("AI 服务暂不可用")
 
         runner = WorkbenchTaskRunner({"greet": server._execute_greet})
@@ -1872,7 +1872,7 @@ class WebApiRouteTests(unittest.TestCase):
 
     def test_greet_task_marks_zero_output_pause_as_failed(self):
         # 审计回归：服务级 AI 故障且零产出时，任务不得伪装成 completed。
-        def paused_generate(config, job_ids=None):
+        def paused_generate(config, job_ids=None, db_path=None):
             config["_workbench_greeting_report"] = {
                 "requested_count": 1,
                 "generated_count": 0,
@@ -1918,7 +1918,7 @@ class WebApiRouteTests(unittest.TestCase):
 
     def test_greet_task_partial_pause_completes_with_annotation(self):
         # 部分成功的服务级故障保留 completed，但必须显式标注提前结束。
-        def partial_paused_generate(config, job_ids=None):
+        def partial_paused_generate(config, job_ids=None, db_path=None):
             config["_workbench_greeting_report"] = {
                 "requested_count": 2,
                 "generated_count": 1,
@@ -2025,8 +2025,126 @@ class WebApiRouteTests(unittest.TestCase):
             finally:
                 db.close()
 
+    def test_mark_existing_greeting_ready_rejects_allowed_status_transition(self):
+        # Codex 审计 P2 回归：保留现有招呼语同样必须钉扎状态，approved→error 后不得复活为 ready。
+        with tempfile.TemporaryDirectory() as tmp:
+            db = get_db(Path(tmp) / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("preserve-transition"))
+                update_job_greeting(db, "preserve-transition", "人工编辑的招呼语")
+                update_job_status(db, "preserve-transition", "approved")
+                # 模拟读取（approved）之后、保留之前状态被并发改为 error
+                update_job_status(db, "preserve-transition", "error")
+
+                self.assertFalse(
+                    mark_existing_greeting_ready(
+                        db,
+                        "preserve-transition",
+                        expected_greeting="人工编辑的招呼语",
+                        expected_status="approved",
+                    )
+                )
+                row = db.execute(
+                    "SELECT greeting, status FROM jobs WHERE id = 'preserve-transition'"
+                ).fetchone()
+                self.assertEqual(row["status"], "error")
+            finally:
+                db.close()
+
+    def test_generic_task_endpoint_rejects_greet_mode(self):
+        # Codex 审计 P2 回归：通用任务入口无岗位选择，greet 必须走专用接口，杜绝零岗位成功任务。
+        with patch.object(server, "load_config", return_value={}), \
+             patch.object(server, "_preflight_messages", return_value=[]):
+            status, _, body = self._request(
+                "/api/workbench/task",
+                method="POST",
+                json_body={"mode": "greet"},
+            )
+
+        payload = json.loads(body)
+        self.assertTrue(status.startswith("400"), body)
+        self.assertIn("生成打招呼用语", payload["error"])
+
+    def test_greeting_edit_blocked_while_delivery_task_active(self):
+        # Codex 审计 P2 回归：投递任务运行期间编辑招呼语必须 409，防止平台发旧文本、库里存新文本。
+        active_task = WorkbenchTask(id="active-delivery", mode="deliver", label="确认投递")
+        runner = WorkbenchTaskRunner()
+        runner._tasks[active_task.id] = active_task
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("edit-busy"))
+                update_job_greeting(db, "edit-busy", "原招呼语")
+                update_job_status(db, "edit-busy", "ready")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            with patch.object(server, "task_runner", runner):
+                status, _, body = self._request(
+                    "/api/jobs/edit-busy/greeting",
+                    method="POST",
+                    json_body={"greeting": "投递期间的新文本"},
+                )
+
+            verify_db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                row = verify_db.execute(
+                    "SELECT greeting FROM jobs WHERE id = 'edit-busy'"
+                ).fetchone()
+            finally:
+                verify_db.close()
+
+        payload = json.loads(body)
+        self.assertTrue(status.startswith("409"), body)
+        self.assertEqual(payload["code"], "greeting_edit_busy")
+        self.assertEqual(row["greeting"], "原招呼语")
+
+    def test_greet_task_pins_runtime_database_path(self):
+        # Codex 审计 P2 回归：后台生成必须使用面板运行时数据库，而非 CWD 相对默认库。
+        runner = WorkbenchTaskRunner({"greet": server._execute_greet})
+        captured: dict = {}
+
+        def fake_generate(config, job_ids=None, db_path=None):
+            captured["db_path"] = db_path
+            config["_workbench_greeting_report"] = {
+                "requested_count": 1,
+                "generated_count": 1,
+                "skipped_existing": 0,
+                "failed_count": 0,
+                "conflict_ids": [],
+            }
+            return 1
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            db = get_db(base_dir / "data" / "bosshunter.db")
+            try:
+                insert_job(db, _job("greet-db-path"))
+                update_job_status(db, "greet-db-path", "ready")
+            finally:
+                db.close()
+            server.set_base_dir(base_dir)
+
+            with patch("bosshunter.ai.greeter.generate_greetings", side_effect=fake_generate), \
+                 patch("bosshunter.ai.greeter._get_resume_summary", return_value="简历摘要"), \
+                 patch.object(server, "load_config", return_value={}), \
+                 patch.object(server, "task_runner", runner):
+                status, _, body = self._request(
+                    "/api/workbench/greetings",
+                    method="POST",
+                    json_body={"job_ids": ["greet-db-path"]},
+                )
+            runner.wait(timeout=2)
+
+        self.assertTrue(status.startswith("200"), body)
+        self.assertEqual(captured["db_path"], server.DATA_DIR / "bosshunter.db")
+        self.assertTrue(str(captured["db_path"]).endswith("bosshunter.db"))
+
     def test_web_api_greeting_generation_reports_conflict_ids_on_cas_failure(self):
-        def fake_generate(config, job_ids=None):
+        def fake_generate(config, job_ids=None, db_path=None):
             config["_workbench_greeting_report"] = {
                 "requested_count": 1,
                 "generated_count": 0,
@@ -2069,7 +2187,7 @@ class WebApiRouteTests(unittest.TestCase):
         self.assertTrue(any("状态冲突 1" in message for message in result["logs"]))
 
     def test_web_api_greeting_generation_reports_partial_conflict_with_success(self):
-        def fake_generate(config, job_ids=None):
+        def fake_generate(config, job_ids=None, db_path=None):
             config["_workbench_greeting_report"] = {
                 "requested_count": 2,
                 "generated_count": 1,

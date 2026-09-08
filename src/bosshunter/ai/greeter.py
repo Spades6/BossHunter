@@ -623,14 +623,16 @@ def _review_with_token_retry(greeting: str, job: dict, config: dict) -> dict | N
         raise
 
 
-def generate_greetings(config: dict, job_ids: list[str] | None = None) -> int:
+def generate_greetings(config: dict, job_ids: list[str] | None = None, db_path=None) -> int:
     """Generate greetings for approved jobs (or specific job_ids) with optional self-review.
 
     Returns count generated. When ``job_ids`` is provided, only those jobs are
     processed regardless of their current status, which lets the dashboard
     generate greetings for pending-confirmation jobs without sending them.
+    ``db_path`` lets web callers pin the runtime database; without it the
+    module-level default (CWD-relative) is used for CLI compatibility.
     """
-    db = get_db()
+    db = get_db(db_path)
     if job_ids is None:
         jobs = get_jobs_by_status(db, "approved")
     elif job_ids:
@@ -682,6 +684,7 @@ def generate_greetings(config: dict, job_ids: list[str] | None = None) -> int:
             db,
             job["id"],
             expected_greeting=str(job.get("greeting") or ""),
+            expected_status=str(job.get("status") or "approved"),
         ):
             preserved_existing += 1
         else:

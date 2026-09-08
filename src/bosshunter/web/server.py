@@ -852,8 +852,15 @@ def _execute_greet(task: WorkbenchTask, config: dict) -> None:
 	if not _get_resume_summary(config):
 		_log(task, "无法读取简历，任务未启动：请先在配置面板上传简历后重试")
 		raise RuntimeError("无法读取简历：请先在配置面板上传简历后重试")
+	if not selected_job_ids:
+		_log(task, "未选择任何岗位，任务未启动")
+		raise ValueError("未选择任何岗位：请通过「生成打招呼用语」选择岗位后重试")
 	_log(task, f"开始为 {len(selected_job_ids)} 个岗位生成招呼语")
-	generated_count = generate_greetings(config, job_ids=selected_job_ids)
+	generated_count = generate_greetings(
+		config,
+		job_ids=selected_job_ids,
+		db_path=DATA_DIR / "bosshunter.db",
+	)
 	report = config.get("_workbench_greeting_report", {})
 	conflict_ids = [str(job_id) for job_id in report.get("conflict_ids", [])]
 	preserved_count = int(report.get("skipped_existing", 0) or 0)
@@ -1524,6 +1531,10 @@ def api_workbench_task_start():
 		if not isinstance(body, dict):
 			return _json_response({"error": "请求体必须是对象"}, 400)
 		mode = str(body.get("mode", ""))
+		if mode == "greet":
+			# greet 必须走 /api/workbench/greetings 携带岗位选择，通用入口无 job_ids
+			# 只会产生"零岗位成功任务"。
+			return _json_response({"error": "生成招呼语请使用「生成打招呼用语」并选择岗位"}, 400)
 		base_config = load_config(CONFIG_PATH)
 		options = body.get("options") if isinstance(body.get("options"), dict) else None
 		collection_options = None
@@ -1866,26 +1877,36 @@ def api_job_update_greeting(job_id):
 		if len(greeting) > 300:
 			return _json_response({"error": "招呼语不能超过300字"}, 400)
 
-		db = _get_web_db()
-		try:
-			row = db.execute(
-				"SELECT id, status FROM jobs WHERE id = ? AND deleted_at IS NULL", (job_id,)
-			).fetchone()
-			if not row:
-				return _json_response({"error": "岗位不存在或已进入回收站"}, 404)
-			status = str(row["status"] or "")
-			if status not in GREETING_ALLOWED_STATUSES:
-				return _json_response({
-					"error": "当前岗位状态不能修改招呼语",
-					"code": "greeting_status_blocked",
-				}, 409)
-			if not edit_job_greeting(db, job_id, greeting, expected_status=status):
-				return _json_response({
-					"error": "岗位状态已变化，招呼语未保存",
-					"code": "greeting_status_blocked",
-				}, 409)
-		finally:
-			db.close()
+		# 投递/生成任务运行期间禁止编辑：发送器与生成器持有岗位和招呼语快照，
+		# 期间改写会导致平台发出旧文本而库里保存新文本（状态 CAS 防不住这类竞争）。
+		active = task_runner.status().get("active")
+		if active and active.get("mode") in {"greet", "deliver", "full"}:
+			return _json_response({
+				"error": f"「{active.get('label') or active.get('mode')}」任务运行中，请等待结束后再编辑招呼语",
+				"code": "greeting_edit_busy",
+			}, 409)
+
+		with job_mutation_lock:
+			db = _get_web_db()
+			try:
+				row = db.execute(
+					"SELECT id, status FROM jobs WHERE id = ? AND deleted_at IS NULL", (job_id,)
+				).fetchone()
+				if not row:
+					return _json_response({"error": "岗位不存在或已进入回收站"}, 404)
+				status = str(row["status"] or "")
+				if status not in GREETING_ALLOWED_STATUSES:
+					return _json_response({
+						"error": "当前岗位状态不能修改招呼语",
+						"code": "greeting_status_blocked",
+					}, 409)
+				if not edit_job_greeting(db, job_id, greeting, expected_status=status):
+					return _json_response({
+						"error": "岗位状态已变化，招呼语未保存",
+						"code": "greeting_status_blocked",
+					}, 409)
+			finally:
+				db.close()
 		return _json_response({"success": True, "greeting": greeting})
 	except Exception as e:
 		return _json_response({"error": str(e)}, 500)

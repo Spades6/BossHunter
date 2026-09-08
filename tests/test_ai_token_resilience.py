@@ -1016,7 +1016,7 @@ class GreeterTokenResilienceTests(unittest.TestCase):
                 db.close()
 
             with (
-                patch("bosshunter.ai.greeter.get_db", side_effect=lambda: open_db(db_path)),
+                patch("bosshunter.ai.greeter.get_db", side_effect=lambda *args, **kwargs: open_db(db_path)),
                 patch("bosshunter.ai.greeter._get_resume_summary", return_value="这份简历摘要不含任何网址"),
                 patch(
                     "bosshunter.ai.greeter._call_claude",
@@ -1208,6 +1208,7 @@ class GreeterTokenResilienceTests(unittest.TestCase):
             db,
             "existing",
             expected_greeting="人工编辑后的招呼语",
+            expected_status="approved",
         )
         self.assertEqual(config["_workbench_greeting_report"]["skipped_existing"], 1)
         self.assertTrue(any("不会用 AI 覆盖" in message for message in logs))

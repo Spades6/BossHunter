@@ -611,6 +611,8 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
   const sendReadyGreetings = async (ids: string[]) => {
     if (!ids.length) return
     const count = ids.length
+    // 人工确认门控：直接发送前必须显式确认，防止误触批量联系招聘方。
+    if (!window.confirm(`确认向所选 ${count} 个岗位发送招呼语？\n发送将立即开始并受每日额度与发送时间窗口限制。`)) return
     try {
       const res = await fetch('/api/workbench/deliver', {
         method: 'POST',
