@@ -616,15 +616,16 @@ def _execute_full(task: WorkbenchTask, config: dict) -> None:
 	if task.stop_requested.is_set():
 		return
 
-	# 人工确认已通过：此时才允许续发"待发送招呼语"积压（确认门之前绝不自动发送）。
+	# 人工确认只覆盖本次显式勾选的岗位：积压草稿不在确认范围内，绝不连带发送
+	# （Codex 复审 P1：确认 B 不能连带发送未确认的积压 A）。
+	# 积压需在「待发送招呼语」区通过「直接发送」（带确认弹窗）人工处理；
+	# 投递冷却保持在第一批实际投递之前执行（Codex 复审 P2）。
 	if deferred_job_ids:
-		_log(task, f"确认完成，续发上次「待发送招呼语」积压 {len(deferred_job_ids)} 个岗位")
-		deferred_config = load_config(CONFIG_PATH)
-		deferred_config["_workbench_job_ids"] = deferred_job_ids
-		deferred_config["_workbench_skip_greeting"] = True
-		_execute_deliver(task, deferred_config)
-		if task.stop_requested.is_set():
-			return
+		_log(
+			task,
+			f"检测到 {len(deferred_job_ids)} 个「待发送招呼语」积压不在本次确认范围，未发送；"
+			"请在「待发送招呼语」区使用「直接发送」处理。",
+		)
 
 	job_ids = [str(job_id) for job_id in task.context.get("confirmed_job_ids", []) if str(job_id)]
 	task.context["waiting_confirmation"] = False
@@ -1782,10 +1783,13 @@ def api_workbench_deliver():
 				)
 			)
 
-		deliver_options = {"_workbench_job_ids": job_ids}
-		if direct_send:
-			deliver_options["_workbench_skip_greeting"] = True
-		task = task_runner.start("deliver", _task_config(deliver_options))
+		# 与编辑接口的活跃任务检查同锁互斥（Codex 复审 P2）：task_runner.start
+		# 必须在 job_mutation_lock 内，否则编辑检查通过后仍可能插入新的投递任务。
+		with job_mutation_lock:
+			deliver_options = {"_workbench_job_ids": job_ids}
+			if direct_send:
+				deliver_options["_workbench_skip_greeting"] = True
+			task = task_runner.start("deliver", _task_config(deliver_options))
 		return _json_response(task)
 	except TaskAlreadyRunningError as e:
 		return _json_response({"error": str(e)}, 409)

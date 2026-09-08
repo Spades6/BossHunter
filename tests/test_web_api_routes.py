@@ -2151,8 +2151,9 @@ class WebApiRouteTests(unittest.TestCase):
         deliver.assert_not_called()
         self.assertTrue(any("未经人工确认不会自动发送" in message for message in task.logs))
 
-    def test_full_flow_defers_backlog_delivery_until_confirmed(self):
-        # Codex 审计 P1 回归：积压续发必须发生在人工确认门通过之后，且顺序为先积压后新批次。
+    def test_full_flow_delivers_only_confirmed_jobs(self):
+        # Codex 复审 P1 回归：确认范围必须精确——确认 B 不得连带发送未确认的积压 A；
+        # 积压仅提示走「直接发送」，投递次数恰为 1 且只含被确认岗位。
         from threading import Thread
         from time import sleep, time
 
@@ -2160,44 +2161,41 @@ class WebApiRouteTests(unittest.TestCase):
             base_dir = Path(tmp)
             db = get_db(base_dir / "data" / "bosshunter.db")
             try:
-                insert_job(db, _job("draft-ready"))
-                update_job_greeting(db, "draft-ready", "草稿招呼语")
-                update_job_status(db, "draft-ready", "ready")
-                insert_job(db, _job("pending-new"))
-                update_job_score(db, "pending-new", 90, "匹配")
-                update_job_status(db, "pending-new", "approved")
+                insert_job(db, _job("backlog-a"))
+                update_job_greeting(db, "backlog-a", "未确认的积压草稿")
+                update_job_status(db, "backlog-a", "ready")
+                insert_job(db, _job("confirmed-b"))
+                update_job_score(db, "confirmed-b", 90, "匹配")
+                update_job_status(db, "confirmed-b", "approved")
             finally:
                 db.close()
             server.set_base_dir(base_dir)
 
-            task = WorkbenchTask(id="full-backlog", mode="full", label="运行全流程")
+            task = WorkbenchTask(id="full-precise", mode="full", label="运行全流程")
             with patch.object(server, "_execute_collect"), \
                  patch.object(server, "_execute_deliver") as deliver, \
-                 patch.object(server, "_wait_for_collection_delivery_cooldown", return_value=False), \
+                 patch.object(server, "_wait_for_collection_delivery_cooldown") as cooldown, \
                  patch.object(server, "_execute_monitor"):
+                cooldown.return_value = False
                 thread = Thread(target=server._execute_full, args=(task, {"scoring": {"threshold": 71}}), daemon=True)
                 thread.start()
                 deadline = time() + 3
                 while time() < deadline and not task.context.get("waiting_confirmation"):
                     sleep(0.02)
                 self.assertTrue(task.context.get("waiting_confirmation"), task.logs)
-                # 确认门通过之前：积压与批次均不得发送
+                # 确认前：零投递
                 self.assertEqual(deliver.call_count, 0)
-                task.context["confirmed_job_ids"] = ["pending-new"]
+                task.context["confirmed_job_ids"] = ["confirmed-b"]
                 task.context["confirmation_event"].set()
                 thread.join(timeout=3)
 
         self.assertFalse(thread.is_alive())
-        self.assertEqual(deliver.call_count, 2)
-        self.assertEqual(
-            deliver.call_args_list[0].args[1]["_workbench_job_ids"],
-            ["draft-ready"],
-        )
-        self.assertTrue(deliver.call_args_list[0].args[1]["_workbench_skip_greeting"])
-        self.assertEqual(
-            deliver.call_args_list[1].args[1]["_workbench_job_ids"],
-            ["pending-new"],
-        )
+        # 只发送被明确确认的 B；积压 A 不在任何投递调用中
+        self.assertEqual(deliver.call_count, 1)
+        delivered_ids = deliver.call_args_list[0].args[1]["_workbench_job_ids"]
+        self.assertEqual(delivered_ids, ["confirmed-b"])
+        self.assertNotIn("backlog-a", delivered_ids)
+        self.assertTrue(any("不在本次确认范围" in message for message in task.logs))
 
     def test_greet_task_pins_runtime_database_path(self):
         # Codex 审计 P2 回归：后台生成必须使用面板运行时数据库，而非 CWD 相对默认库。
