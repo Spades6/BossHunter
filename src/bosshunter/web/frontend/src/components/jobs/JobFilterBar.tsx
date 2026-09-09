@@ -91,6 +91,7 @@ export function JobFilterBar({
             <option value="boss">BOSS 直聘</option>
             <option value="zhilian">智联招聘</option>
             <option value="51job">前程无忧</option>
+            <option value="liepin">猎聘</option>
           </Select>
         )}
         <Select className={cn(controlClass, compact && 'xl:order-1')} value={filters.education} onChange={event => update('education', event.target.value)} aria-label="学历要求">
