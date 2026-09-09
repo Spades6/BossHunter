@@ -10,6 +10,8 @@ from typing import Any
 DB_PATH = Path("./data/bosshunter.db")
 MAX_JOB_IDS = 1000
 DELETION_PROTECTED_STATUSES = {"sent", "replied", "resume_sent", "needs_resume", "follow_up_sent"}
+GREETING_ALLOWED_STATUSES = {"ready", "approved", "error"}
+REJECT_ALLOWED_STATUSES = {"ready", "approved", "error"}
 DELETION_PROTECTED_HISTORY_ACTIONS = {
     "sent", "manual_sent", "replied", "resume_sent", "needs_resume", "follow_up_sent", "reply_pending", "auto_replied",
 }
@@ -533,29 +535,32 @@ def save_generated_greeting_preview(
     style_issues: list[str],
     selected_greeting: str,
     selection: str,
+    expected_greeting: str = "",
+    expected_status: str = "",
 ) -> bool:
-    """Persist generated variants without overwriting a human-reviewed greeting."""
+    """Save variants and ready status atomically, only for the unreviewed snapshot."""
+    status_sql, status_params = _status_placeholders(GREETING_ALLOWED_STATUSES)
+    conditions = [
+        "id = ?", "deleted_at IS NULL", "greeting_reviewed_at IS NULL",
+        f"status IN ({status_sql})", "COALESCE(greeting, '') = ?",
+    ]
+    params: list[Any] = [
+        selected_greeting, original, optimized,
+        json.dumps(style_issues, ensure_ascii=False), selection,
+        job_id, *status_params, expected_greeting,
+    ]
+    if expected_status:
+        conditions.append("status = ?")
+        params.append(expected_status)
     cursor = conn.execute(
-        """
+        f"""
         UPDATE jobs
-        SET greeting = ?,
-            greeting_original = ?,
-            greeting_optimized = ?,
-            greeting_style_issues = ?,
-            greeting_selection = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-          AND deleted_at IS NULL
-          AND greeting_reviewed_at IS NULL
+        SET greeting = ?, greeting_original = ?, greeting_optimized = ?,
+            greeting_style_issues = ?, greeting_selection = ?,
+            status = 'ready', updated_at = CURRENT_TIMESTAMP
+        WHERE {' AND '.join(conditions)}
         """,
-        (
-            selected_greeting,
-            original,
-            optimized,
-            json.dumps(style_issues, ensure_ascii=False),
-            selection,
-            job_id,
-        ),
+        params,
     )
     conn.commit()
     return cursor.rowcount == 1
@@ -608,23 +613,164 @@ def select_job_greeting(
         "edited": "采用手动编辑招呼语",
     }
     with conn:
-        conn.execute(
+        cursor = conn.execute(
             """
             UPDATE jobs
             SET greeting = ?,
                 greeting_selection = ?,
                 greeting_reviewed_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND deleted_at IS NULL
+            WHERE id = ? AND deleted_at IS NULL AND status = ?
+              AND greeting IS ? AND greeting_original IS ? AND greeting_optimized IS ?
+              AND greeting_reviewed_at IS ?
             """,
-            (greeting, selection, job_id),
+            (greeting, selection, job_id, status, record.get("greeting"),
+             record.get("greeting_original"), record.get("greeting_optimized"),
+             record.get("greeting_reviewed_at")),
         )
+        if cursor.rowcount != 1:
+            raise ValueError("岗位或招呼语已变化，请刷新后重新确认")
         conn.execute(
             "INSERT INTO history (job_id, action, detail) VALUES (?, 'greeting_selected', ?)",
             (job_id, action_labels[selection]),
         )
     updated = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     return dict(updated) if updated is not None else {}
+
+
+
+def _status_placeholders(statuses: set[str]) -> tuple[str, list[str]]:
+    ordered = sorted(statuses)
+    return ",".join("?" for _ in ordered), ordered
+
+
+def save_generated_greeting(
+    conn: sqlite3.Connection,
+    job_id: str,
+    greeting: str,
+    *,
+    expected_greeting: str = "",
+    expected_status: str = "",
+) -> bool:
+    """Save a single generated variant with the same snapshot/review protections."""
+    return save_generated_greeting_preview(
+        conn, job_id, original=greeting, optimized=None, style_issues=[],
+        selected_greeting=greeting, selection="generated",
+        expected_greeting=expected_greeting, expected_status=expected_status,
+    )
+
+
+def mark_existing_greeting_ready(
+    conn: sqlite3.Connection,
+    job_id: str,
+    *,
+    expected_greeting: str,
+    expected_status: str = "",
+) -> bool:
+    """Preserve existing text and make it ready only while the snapshot still matches.
+
+    ``expected_status`` pins the status observed when the job was read, so an
+    allowed-status transition (e.g. approved -> error) between read and write is
+    rejected instead of silently reviving the job to ready.
+    """
+    status_sql, status_params = _status_placeholders(GREETING_ALLOWED_STATUSES)
+    conditions = [
+        "id = ?",
+        "deleted_at IS NULL",
+        f"status IN ({status_sql})",
+        "COALESCE(greeting, '') = ?",
+    ]
+    params: list[Any] = [job_id, *status_params, expected_greeting]
+    if expected_status:
+        conditions.append("status = ?")
+        params.append(expected_status)
+    cursor = conn.execute(
+        f"""
+        UPDATE jobs SET status = 'ready', updated_at = CURRENT_TIMESTAMP
+        WHERE {' AND '.join(conditions)}
+        """,
+        params,
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
+def edit_job_greeting(
+    conn: sqlite3.Connection,
+    job_id: str,
+    greeting: str,
+    *,
+    expected_status: str | None = None,
+) -> bool:
+    """Atomically edit a greeting and append history while the job remains editable."""
+    status_sql, status_params = _status_placeholders(GREETING_ALLOWED_STATUSES)
+    conditions = ["id = ?", "deleted_at IS NULL", f"status IN ({status_sql})"]
+    params: list[Any] = [greeting, job_id, *status_params]
+    if expected_status is not None:
+        conditions.append("status = ?")
+        params.append(expected_status)
+    with conn:
+        cursor = conn.execute(
+            f"UPDATE jobs SET greeting = ?, greeting_selection = 'edited', greeting_reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE {' AND '.join(conditions)}",
+            params,
+        )
+        if cursor.rowcount != 1:
+            return False
+        conn.execute(
+            "INSERT INTO history (job_id, action, detail) VALUES (?, 'greeting_edited', ?)",
+            (job_id, "Web Dashboard 编辑招呼语"),
+        )
+    return True
+
+
+def reject_jobs(
+    conn: sqlite3.Connection,
+    job_ids: Any,
+    *,
+    expected_statuses: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Reject a batch atomically; any missing, deleted, or stale job aborts the whole batch."""
+    ids = _normalize_job_ids(job_ids, required=True)
+    conn.execute("BEGIN IMMEDIATE")
+    rows = _job_rows_by_ids(conn, ids)
+    by_id = {str(row["id"]): row for row in rows}
+    invalid_ids = [
+        job_id
+        for job_id in ids
+        if job_id not in by_id
+        or by_id[job_id].get("deleted_at") is not None
+        or str(by_id[job_id].get("status") or "") not in REJECT_ALLOWED_STATUSES
+        or (
+            expected_statuses is not None
+            and str(by_id[job_id].get("status") or "") != str(expected_statuses.get(job_id) or "")
+        )
+    ]
+    if invalid_ids:
+        conn.rollback()
+        return {"affected_count": 0, "invalid_ids": invalid_ids}
+
+    status_sql, status_params = _status_placeholders(REJECT_ALLOWED_STATUSES)
+    placeholders = ",".join("?" for _ in ids)
+    try:
+        with conn:
+            cursor = conn.execute(
+                f"""
+                UPDATE jobs SET status = 'rejected', updated_at = CURRENT_TIMESTAMP
+                WHERE id IN ({placeholders})
+                  AND deleted_at IS NULL
+                  AND status IN ({status_sql})
+                """,
+                [*ids, *status_params],
+            )
+            if cursor.rowcount != len(ids):
+                raise sqlite3.IntegrityError("岗位状态已变化，放弃操作已回滚")
+            conn.executemany(
+                "INSERT INTO history (job_id, action, detail) VALUES (?, 'rejected', ?)",
+                [(job_id, "Web Dashboard 放弃投递") for job_id in ids],
+            )
+    except sqlite3.IntegrityError:
+        return {"affected_count": 0, "invalid_ids": ids}
+    return {"affected_count": len(ids), "invalid_ids": []}
 
 
 def update_job_status(conn: sqlite3.Connection, job_id: str, status: str) -> None:
