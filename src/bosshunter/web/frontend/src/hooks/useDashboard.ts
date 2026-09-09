@@ -161,10 +161,22 @@ export function useDashboard(scope: DashboardDataScope = 'all') {
   const [refreshing, setRefreshing] = useState(false)
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const refreshingRef = useRef(false)
+  const greetingRevisionRef = useRef(0)
+
+  const updateGreetingJob = useCallback((updated: Job) => {
+    greetingRevisionRef.current += 1
+    setWorkbench(previous => ({
+      ...previous,
+      pending_confirmation: previous.pending_confirmation.map(job => job.id === updated.id ? updated : job),
+      pending_greetings: previous.pending_greetings.map(job => job.id === updated.id ? updated : job),
+      send_errors: previous.send_errors.map(job => job.id === updated.id ? updated : job),
+    }))
+  }, [])
 
   const fetchAll = useCallback(async () => {
     if (refreshingRef.current) return
     refreshingRef.current = true
+    const greetingRevision = greetingRevisionRef.current
     setRefreshing(true)
     try {
       const needsWorkbench = scope === 'all' || scope === 'workbench'
@@ -174,12 +186,16 @@ export function useDashboard(scope: DashboardDataScope = 'all') {
         needsWorkbench ? fetch('/api/workbench', fetchOptions) : Promise.resolve(null),
         needsHistory ? fetch('/api/history?limit=50&include_unresolved=1&include_monitor_conversations=1', fetchOptions) : Promise.resolve(null),
       ])
+      if ((workbenchRes && !workbenchRes.ok) || (historyRes && !historyRes.ok)) {
+        throw new Error('读取控制台数据失败')
+      }
       const [workbenchData, historyData] = await Promise.all([
         workbenchRes ? workbenchRes.json() : Promise.resolve(undefined),
         historyRes ? historyRes.json() : Promise.resolve(undefined),
       ])
 
-      if (workbenchData !== undefined) setWorkbench(workbenchData)
+      // An older poll must not replace the greeting returned by a successful save.
+      if (workbenchData !== undefined && greetingRevision === greetingRevisionRef.current) setWorkbench(workbenchData)
       if (historyData !== undefined) setHistory(historyData)
       setLastRefreshedAt(new Date())
       setError('')
@@ -246,6 +262,7 @@ export function useDashboard(scope: DashboardDataScope = 'all') {
     refreshing,
     lastRefreshedAt,
     refresh: fetchAll,
+    updateGreetingJob,
     startTask,
     stopTask,
   }
