@@ -18,7 +18,7 @@ from uuid import uuid4
 from wsgiref.simple_server import WSGIServer
 
 import yaml
-from bottle import Bottle, request, response, static_file, abort
+from bottle import Bottle, HTTPResponse, request, response, static_file, abort
 
 from bosshunter import __version__
 from bosshunter.ai.credentials import get_ai_api_key
@@ -58,6 +58,7 @@ from bosshunter.collection.platforms.zhilian import load_zhilian_city_snapshot
 from bosshunter.collection.platforms.job51 import load_51job_city_snapshot
 from bosshunter.collection.platforms.liepin import load_liepin_city_snapshot
 from bosshunter.collection_run_store import (
+	boss_resume_options,
 	get_collection_run,
 	list_collection_runs,
 	mark_orphaned_collection_runs_stopped,
@@ -73,6 +74,19 @@ from bosshunter.scoring_run_store import (
 )
 from bosshunter.scoring_selection import preview_scoring, select_scoring_jobs, validate_options
 from bosshunter.web.preflight import check_ai_connection, collect_preflight_checks, error_messages
+from bosshunter.web.resume_info import (
+	build_resume_info_payload,
+	is_default_resume_placeholder,
+	load_resume_info,
+	resolve_resume_filesystem_path,
+)
+from bosshunter.web.resume_names import resolve_active_resume_path, select_resume_markdown_filename
+from bosshunter.web.resume_original import (
+	remove_companion_pdf,
+	resolve_configured_resume_files,
+	upload_keeps_original_pdf,
+	write_resume_artifacts,
+)
 from bosshunter.web.resume_upload import ResumeUploadError, prepare_resume_content
 from bosshunter.web.city_lookup import CityLookupError, lookup_city
 from bosshunter.web.tasks import (
@@ -330,6 +344,8 @@ def _execute_collect(task: WorkbenchTask, config: dict) -> None:
 	collect_config = dict(config)
 	collect_config["_workbench_stop_event"] = task.stop_requested
 	collect_config["_workbench_collect_progress"] = lambda state: _record_collect_progress(task, state)
+	collect_config["_workbench_log"] = lambda message: _log(task, message)
+	collect_config["_workbench_score_progress"] = lambda state: _record_score_progress(task, state)
 	if "_collection_options" not in config:
 		# Preserve the old private executor seam used by legacy callers. New Web
 		# collection tasks always inject normalized options before starting.
@@ -1261,9 +1277,12 @@ def api_workbench_preflight():
 	options = body.get("options") if isinstance(body.get("options"), dict) else None
 	try:
 		config = load_config(CONFIG_PATH)
+		options = _resolve_collection_resume(mode, options)
 		checks = collect_preflight_checks(mode, config, options)
 		messages = error_messages(checks)
 		return _json_response({"ok": not messages, "messages": messages, "checks": checks})
+	except ValueError as e:
+		return _json_response({"ok": False, "messages": [str(e)]}, 400)
 	except Exception as e:
 		return _json_response({"ok": False, "messages": [str(e)]}, 500)
 
@@ -1282,12 +1301,16 @@ def _scoring_options_from_body(body: dict) -> dict:
 	raw_options = body.get("options", body)
 	if not isinstance(raw_options, dict):
 		raise ValueError("评分参数必须是对象")
-	return validate_options(
+	options = validate_options(
 		raw_options.get("scope", "pending"),
 		raw_options.get("limit"),
 		raw_options.get("job_ids", []),
 		raw_options.get("force_rescore", False),
 	)
+	# This cap applies to IDs supplied by the page, not internally selected jobs.
+	if len(options["job_ids"]) > 1000:
+		raise ValueError("一次最多选择 1000 个岗位")
+	return options
 
 
 @app.route("/api/scoring/preview", method="POST")
@@ -1458,6 +1481,14 @@ def api_scoring_end(run_id):
 	return _json_response(ended)
 
 
+def _resolve_collection_resume(mode: str, options: dict | None) -> dict | None:
+	if options and options.get("resume_run_id"):
+		if mode != "collect" or not isinstance(options["resume_run_id"], str):
+			raise ValueError("请在岗位采集中继续原 BOSS 任务")
+		return boss_resume_options(DATA_DIR / "bosshunter.db", options["resume_run_id"])
+	return options
+
+
 @app.route("/api/workbench/task", method="POST")
 def api_workbench_task_start():
 	try:
@@ -1467,6 +1498,10 @@ def api_workbench_task_start():
 		mode = str(body.get("mode", ""))
 		base_config = load_config(CONFIG_PATH)
 		options = body.get("options") if isinstance(body.get("options"), dict) else None
+		try:
+			options = _resolve_collection_resume(mode, options)
+		except ValueError as exc:
+			return _json_response({"error": str(exc)}, 400)
 		collection_options = None
 		if mode == "collect":
 			try:
@@ -1492,7 +1527,8 @@ def api_workbench_task_start():
 		if messages:
 			return _json_response({"error": "请先处理启动前检查", "messages": messages}, 400)
 		extra = {"_collection_options": collection_options} if collection_options is not None else {}
-		if collection_options is not None:
+		before_start = None
+		if collection_options is not None and not collection_options.get("resume_run_id"):
 			# Persist only non-secret collection preferences so the next dialog can
 			# restore each platform's independent fields and queue order.
 			base_config["collection"] = {
@@ -1512,9 +1548,9 @@ def api_workbench_task_start():
 				if platform not in selected_platforms and isinstance(platform_configs.get(platform), dict):
 					platform_configs[platform]["enabled"] = False
 			base_config["platforms"] = platform_configs
-			_write_config(base_config)
+			before_start = lambda: _write_config(base_config)
 		with job_mutation_lock:
-			task = task_runner.start(mode, _task_config(extra))
+			task = task_runner.start(mode, {**base_config, **extra}, before_start=before_start)
 		return _json_response(task)
 	except TaskAlreadyRunningError as e:
 		return _json_response({"error": str(e)}, 409)
@@ -2427,24 +2463,51 @@ def api_resume_get():
 	try:
 		config = load_config(CONFIG_PATH)
 		resume_path = config.get("profile", {}).get("resume_path", "")
-		if resume_path and Path(resume_path).exists():
-			p = Path(resume_path)
-			stat = p.stat()
-			return _json_response({
-				"filename": p.name,
-				"size": stat.st_size,
-				"uploaded_at": time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)),
-				"path": str(p)
-			})
-		return _json_response(None)
+		if not resume_path or not str(resume_path).strip():
+			return _json_response(None)
+		configured = resolve_resume_filesystem_path(resume_path, BASE_DIR)
+		info = load_resume_info(configured)
+		if info is None:
+			# Default ./resume.md from config DEFAULTS is a placeholder, not an error.
+			if is_default_resume_placeholder(resume_path):
+				return _json_response(None)
+			return _json_response({"error": "配置的简历文件不存在或无法读取"}, 404)
+		canonical = str(info["path"])
+		if Path(canonical).resolve() != configured.resolve():
+			# Point AI/config at Markdown after PDF-only or legacy PDF paths.
+			config.setdefault("profile", {})["resume_path"] = canonical
+			_write_config(config)
+		return _json_response(info)
+	except ResumeUploadError as e:
+		return _json_response({"error": str(e)}, 400)
 	except Exception as e:
 		return _json_response({"error": str(e)}, 500)
+
+
+@app.route("/api/resume/original")
+def api_resume_original():
+	"""Serve the companion original PDF for in-panel preview."""
+	try:
+		config = load_config(CONFIG_PATH)
+		resume_path = config.get("profile", {}).get("resume_path", "")
+		# Match GET /api/resume: blank/whitespace means no resume configured.
+		if not resume_path or not str(resume_path).strip():
+			abort(404, "No resume configured")
+		configured = resolve_resume_filesystem_path(resume_path, BASE_DIR)
+		_, pdf_path = resolve_configured_resume_files(configured)
+		if not pdf_path.is_file():
+			abort(404, "Original PDF not found")
+		return static_file(pdf_path.name, root=str(pdf_path.parent), mimetype="application/pdf")
+	except HTTPResponse:
+		raise
+	except Exception as e:
+		return _json_response({"error": str(e)}, 500)
+
 
 
 @app.route("/api/resume/upload", method="POST")
 def api_resume_upload():
 	try:
-		import yaml
 		upload = request.files.get("file")
 		if not upload:
 			return _json_response({"error": "No file uploaded"}, 400)
@@ -2459,20 +2522,35 @@ def api_resume_upload():
 		raw_name = upload.raw_filename or upload.filename
 		safe_name, stored_content = prepare_resume_content(raw_name, content)
 		RESUME_DIR.mkdir(parents=True, exist_ok=True)
-		dest = RESUME_DIR / safe_name
-		dest.write_bytes(stored_content)
-
-		# Update config
 		config = load_config(CONFIG_PATH)
-		config.setdefault("profile", {})["resume_path"] = str(dest)
+		active_path = resolve_active_resume_path(
+			config.get("profile", {}).get("resume_path") or None,
+			BASE_DIR,
+		)
+		final_name = select_resume_markdown_filename(
+			RESUME_DIR,
+			safe_name,
+			stored_content,
+			active_path,
+		)
+		dest = RESUME_DIR / final_name
+		original_pdf_bytes = content if upload_keeps_original_pdf(raw_name) else None
+		write_resume_artifacts(dest, stored_content, original_pdf_bytes=original_pdf_bytes)
+
+		# Always store an absolute path so AI/preflight can Path(...).exists() directly.
+		config.setdefault("profile", {})["resume_path"] = str(dest.resolve())
 		_write_config(config)
 
-		return _json_response({
-			"success": True,
-			"filename": safe_name,
-			"size": len(stored_content),
-			"path": str(dest)
-		})
+		info = build_resume_info_payload(
+			filename=final_name,
+			size=len(stored_content),
+			mtime=dest.stat().st_mtime,
+			content=stored_content.decode("utf-8"),
+			path=str(dest.resolve()),
+			has_original_pdf=original_pdf_bytes is not None,
+			original_pdf_path=str(dest.with_suffix(".pdf").resolve()) if original_pdf_bytes is not None else None,
+		)
+		return _json_response({"success": True, **info})
 	except ResumeUploadError as e:
 		return _json_response({"error": str(e)}, 400)
 	except Exception as e:
@@ -2482,14 +2560,24 @@ def api_resume_upload():
 @app.route("/api/resume", method="DELETE")
 def api_resume_delete():
 	try:
-		import yaml
 		config = load_config(CONFIG_PATH)
 
-		# Never delete the master resume from disk; only detach it from config.
+		# Detach from config always. Only drop the companion PDF when a Markdown
+		# master already exists — never force PDF→MD conversion here, or a bad
+		# PDF-only resume would block DELETE.
+		resume_path = config.get("profile", {}).get("resume_path", "")
+		if resume_path:
+			configured = resolve_resume_filesystem_path(resume_path, BASE_DIR)
+			markdown_path, pdf_path = resolve_configured_resume_files(configured)
+			if markdown_path.is_file() and pdf_path.is_file():
+				remove_companion_pdf(configured)
+
 		config.setdefault("profile", {})["resume_path"] = ""
 		_write_config(config)
 
 		return _json_response({"success": True})
+	except ResumeUploadError as e:
+		return _json_response({"error": str(e)}, 400)
 	except Exception as e:
 		return _json_response({"error": str(e)}, 500)
 
