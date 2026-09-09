@@ -691,7 +691,6 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
           {modes.map(item => {
             const isActive = activeTask?.mode === item.mode
             const disabled = Boolean(activeTask && !isActive)
-            const emphasized = isActive || (item.mode === 'full' && !disabled)
             return (
               <button
                 key={item.mode}
@@ -714,11 +713,11 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
                 className={cn(
                   'min-w-0 rounded-xl border p-4 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary md:min-h-32 md:p-5',
                   item.mode === 'full' ? 'col-span-2 min-h-28 md:col-span-1' : 'min-h-24',
-                  emphasized
-                    ? 'border-[#C95116] bg-[#C95116] text-white hover:bg-[#B64510]'
+                  isActive
+                    ? 'border-primary bg-primary text-white'
                     : disabled
                       ? 'cursor-not-allowed border-card-border bg-white text-muted opacity-45'
-                      : 'border-card-border bg-[#FFFCFA] text-foreground hover:border-primary/60 hover:bg-[#FFF0E5]'
+                      : 'border-card-border bg-[#FFFCFA] text-foreground hover:border-primary/60 hover:shadow-md'
                 )}
               >
                 <div className="mb-2 flex items-center justify-between gap-2">
@@ -727,11 +726,11 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
                       ? isActive ? '任务停止中' : '任务启动中'
                       : isActive ? `${item.title}中` : item.title}
                   </div>
-                  <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-full', emphasized ? 'bg-white/15' : 'bg-[#FFF0E5] text-primary')}>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center">
                     {isActive ? <Square className="h-4 w-4 fill-current" /> : <Play className="h-5 w-5 fill-current" />}
                   </span>
                 </div>
-                <p className={`text-xs leading-5 ${emphasized ? 'text-white/90' : 'text-muted'}`}>{item.description}</p>
+                <p className={`text-xs leading-5 ${isActive ? 'text-white/85' : 'text-muted'}`}>{item.description}</p>
               </button>
             )
           })}
