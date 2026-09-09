@@ -244,7 +244,7 @@ async function parsePreflightResponse(res: Response) {
       checks: [{ id: 'preflight_api', title: '启动检查', status: 'error', message, detail: '请重启 BossHunter 后重试。' }] as PreflightCheck[],
     }
   }
-  const messages = Array.isArray(data.messages) ? data.messages.map(String).filter(Boolean) : []
+  const messages = Array.isArray(data.messages) ? [...new Set(data.messages.map(String).filter(Boolean))] : []
   const checks = Array.isArray(data.checks)
     ? data.checks.filter((item): item is PreflightCheck => Boolean(
       item
@@ -254,19 +254,32 @@ async function parsePreflightResponse(res: Response) {
       && 'message' in item
     ))
     : []
-  if (data.error) messages.push(String(data.error))
-  if (!res.ok) messages.push(`预检接口返回 ${res.status}`)
-  if (!data.ok && messages.length === 0) messages.push('后端未返回具体原因')
-  if (checks.length === 0 && messages.length > 0) {
+  if (data.error && !messages.includes(String(data.error))) messages.push(String(data.error))
+  const hasActionableChecks = checks.some(check => check.status !== 'pass')
+  if (!res.ok && !hasActionableChecks && messages.length === 0) messages.push(`预检接口返回 ${res.status}`)
+  if (!data.ok && !hasActionableChecks && messages.length === 0) messages.push('后端未返回具体原因')
+  if ((!res.ok || !data.ok) && !hasActionableChecks && messages.length > 0) {
     checks.push(...messages.map((message, index) => ({
       id: `legacy-${index}`,
       title: '启动检查',
       status: 'error' as const,
       message,
-      detail: '请按提示修复后重新检测。',
+      detail: !res.ok ? `接口状态：HTTP ${res.status}。请修复后重新检查。` : '',
     })))
   }
   return { ok: Boolean(res.ok && data.ok), messages, checks }
+}
+
+function CompactNotice({ message, danger = false }: { message: string; danger?: boolean }) {
+  return (
+    <details className={cn('group mt-2 rounded-lg px-2 text-xs', danger ? 'bg-red-50 text-danger' : 'bg-[#FFF0E5] text-primary')}>
+      <summary className="flex h-8 cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
+        <span role="status" className="min-w-0 flex-1 truncate" title={message}>{message}</span>
+        <ChevronDown className="h-3 w-3 shrink-0 group-open:rotate-180" />
+      </summary>
+      <p className="break-words border-t border-current/10 py-2 leading-5">{message}</p>
+    </details>
+  )
 }
 
 function PreflightPanel({
@@ -278,58 +291,44 @@ function PreflightPanel({
   checking: boolean
   onRetry: () => void
 }) {
+  const [expanded, setExpanded] = useState(false)
   const actionableChecks = checks.filter(check => check.status !== 'pass')
   if (actionableChecks.length === 0) return null
 
   const errors = actionableChecks.filter(check => check.status === 'error').length
-  const warnings = actionableChecks.filter(check => check.status === 'warning').length
   const needsConfig = actionableChecks.some(check => check.action === 'config')
-  const heading = errors ? `启动检查发现 ${errors} 个问题` : `启动检查有 ${warnings} 项提醒`
+  const heading = `${actionableChecks.length} 项${errors ? '待处理' : '提醒'}`
+  const summary = `${heading} · ${actionableChecks[0].message}`
 
   return (
-    <div className={`mt-3 rounded-xl border p-3 ${
+    <div role="region" aria-label="启动检查结果" className={`mt-2 rounded-lg border px-2 text-xs ${
       errors ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'
     }`}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          {errors
-            ? <XCircle className="h-5 w-5 text-danger" />
-            : <AlertTriangle className="h-5 w-5 text-amber-600" />}
-          <div className="text-sm font-black text-foreground">{heading}</div>
-        </div>
-        <div className="flex items-center gap-2">
-          {needsConfig && (
-            <Button variant="secondary" size="sm" onClick={() => window.location.assign('/config')}>
-              打开配置
-            </Button>
-          )}
-          <Button variant="secondary" size="sm" onClick={onRetry} disabled={checking}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${checking ? 'animate-spin' : ''}`} />
-            {checking ? '检查中' : '重新检查'}
+      <div className="flex h-8 min-w-0 items-center gap-2">
+        {errors
+          ? <XCircle className="h-3.5 w-3.5 shrink-0 text-danger" />
+          : <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />}
+        <span role="status" title={summary} className="min-w-0 flex-1 truncate text-foreground">{summary}</span>
+        <button type="button" aria-expanded={expanded} aria-controls="preflight-details" onClick={() => setExpanded(value => !value)} className="flex h-7 shrink-0 items-center gap-1 rounded px-1 text-muted hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
+          {expanded ? '收起' : '详情'}<ChevronDown className={cn('h-3 w-3', expanded && 'rotate-180')} />
+        </button>
+        {needsConfig && (
+          <Button variant="ghost" size="sm" className="h-7 shrink-0 px-1" onClick={() => window.location.assign('/config')}>
+            配置
           </Button>
-        </div>
+        )}
+        <Button variant="ghost" size="sm" className="h-7 shrink-0 px-1" onClick={onRetry} disabled={checking}>
+          <RefreshCw className={`mr-1 h-3 w-3 ${checking ? 'animate-spin' : ''}`} />
+          {checking ? '检查中' : '重新检查'}
+        </Button>
       </div>
-      <div className="mt-2 grid gap-2 lg:grid-cols-2">
-        {actionableChecks.map(check => {
-          const isError = check.status === 'error'
-          return (
-            <div
-              key={`${check.id}-${check.title}`}
-              className={`rounded-lg border bg-white px-3 py-2 ${isError ? 'border-red-200' : 'border-amber-200'}`}
-            >
-              <div className="flex items-start gap-2">
-                {isError
-                  ? <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
-                  : <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />}
-                <div>
-                  <div className="text-xs font-black text-muted">{check.title}</div>
-                  <div className="mt-0.5 text-xs font-bold text-foreground">{check.message}</div>
-                  <p className="mt-1 text-xs leading-5 text-muted">{check.detail}</p>
-                </div>
-              </div>
-            </div>
-          )
-        })}
+      <div id="preflight-details" hidden={!expanded} className="space-y-2 border-t border-current/10 py-2 text-xs leading-5">
+        {actionableChecks.map(check => (
+          <div key={`${check.id}-${check.title}`} className="break-words">
+            <p className="text-foreground"><span className="font-semibold">{check.title}：</span>{check.message}</p>
+            {check.detail && <p className="text-muted">{check.detail}</p>}
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -426,6 +425,9 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
   const activeTask = workbench.task
   const visibleTask = activeTask || workbench.last_task
   const visibleTaskError = visibleTask?.error ? taskErrorFeedback(visibleTask.error) : null
+  const taskSummary = visibleTask
+    ? visibleTaskError?.title || taskStopReasonLabel(visibleTask.stop_reason) || currentTaskStage(visibleTask)
+    : ''
   const pendingReplies = history.filter(item => item.action === 'reply_pending')
 
   const toggleJob = (id: string) => {
@@ -444,7 +446,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
     const data = await parsePreflightResponse(res)
     setPreflightChecks(data.checks)
     if (!data.ok) {
-      setNotice('请按提示处理后再启动')
+      setNotice('')
       return false
     }
     return true
@@ -466,7 +468,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
         setNotice(
           activeTask.status === 'stopping'
             ? `当前${activeTask.label}正在停止，请等待后台完全结束后再启动其他模式。`
-            : `当前正在运行${activeTask.label}，请先点击橙色卡片停止后再启动其他模式。`
+            : `当前正在运行${activeTask.label}，请先点击正在运行的卡片停止后再启动其他模式。`
         )
         return
       }
@@ -494,8 +496,8 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
     try {
       setModePending(preflightMode)
       setNotice('正在重新检查运行环境...')
-      const ok = await runPreflight(preflightMode)
-      setNotice(ok ? '' : '仍有问题需要处理，请查看检查结果。')
+      await runPreflight(preflightMode)
+      setNotice('')
     } catch {
       setNotice('重新检查失败，请确认 BossHunter 后端仍在运行。')
     } finally {
@@ -509,7 +511,7 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
       setPreflightRunning(true)
       setNotice('正在检查全流程运行环境...')
       const ok = await runPreflight('full')
-      setNotice(ok ? '全流程预检通过，可以开始任务。' : '仍有问题需要处理，请查看检查结果。')
+      setNotice(ok ? '全流程预检通过，可以开始任务。' : '')
     } catch {
       setNotice('预检失败，请确认 BossHunter 后端仍在运行。')
     } finally {
@@ -670,37 +672,26 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
   return (
     <div className="space-y-4">
       <section id="today-workbench" className="scroll-mt-6 rounded-2xl border border-card-border bg-white p-4">
-        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-black tracking-tight">今日求职行动</h2>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-right">
-              <Button variant="secondary" size="sm" onClick={refresh} disabled={refreshing}>
-                <RefreshCw className={cn('mr-2 h-4 w-4', refreshing && 'animate-spin')} />
-                {refreshing ? '刷新中' : '刷新'}
-              </Button>
-              {lastRefreshedAt && (
-                <div className="mt-1 text-[10px] text-muted">
-                  最后刷新：{lastRefreshedAt.toLocaleTimeString('zh-CN', { hour12: false })}
-                </div>
-              )}
-            </div>
-            <Button variant="secondary" size="sm" onClick={runStandalonePreflight} disabled={refreshing || Boolean(modePending) || preflightRunning}>
-              <ShieldCheck className={cn('mr-2 h-4 w-4', preflightRunning && 'animate-spin')} />
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <h2 className="text-lg font-bold tracking-tight">今日求职行动</h2>
+          <div className="flex items-center gap-2 text-xs text-muted">
+            <span className="mr-1 hidden sm:inline">{activeTask ? `${activeTask.label}中` : '当前空闲'}</span>
+            <Button variant="ghost" size="sm" className="h-7 px-1" onClick={runStandalonePreflight} disabled={refreshing || Boolean(modePending) || preflightRunning}>
+              <ShieldCheck className={cn('mr-1 h-3.5 w-3.5', preflightRunning && 'animate-spin')} />
               {preflightRunning ? '预检中' : '全流程预检'}
             </Button>
-            <span className="rounded-full bg-[#FFF0E5] px-2 py-1 text-[11px] font-bold text-primary">
-              {activeTask ? `${activeTask.label}中` : '当前空闲'}
-            </span>
+            <Button variant="ghost" size="sm" className="h-7 px-1" onClick={refresh} disabled={refreshing} title={lastRefreshedAt ? `最后刷新：${lastRefreshedAt.toLocaleTimeString('zh-CN', { hour12: false })}` : undefined}>
+              <RefreshCw className={cn('mr-1 h-3.5 w-3.5', refreshing && 'animate-spin')} />
+              {refreshing ? '刷新中' : '刷新'}
+            </Button>
           </div>
         </div>
 
-
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
           {modes.map(item => {
             const isActive = activeTask?.mode === item.mode
             const disabled = Boolean(activeTask && !isActive)
+            const emphasized = isActive || (item.mode === 'full' && !disabled)
             return (
               <button
                 key={item.mode}
@@ -720,48 +711,51 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
                   else void handleModeClick(item.mode)
                 }}
                 aria-disabled={disabled}
-                className={`rounded-xl p-3 text-left transition ${
-                  isActive
-                    ? 'border border-primary bg-primary text-white'
+                className={cn(
+                  'min-w-0 rounded-xl border p-4 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary md:min-h-32 md:p-5',
+                  item.mode === 'full' ? 'col-span-2 min-h-28 md:col-span-1' : 'min-h-24',
+                  emphasized
+                    ? 'border-[#C95116] bg-[#C95116] text-white hover:bg-[#B64510]'
                     : disabled
-                      ? 'cursor-not-allowed border border-card-border bg-white text-muted opacity-45'
-                      : 'border border-card-border bg-[#FFFCFA] text-foreground hover:border-primary/60 hover:shadow-md'
-                }`}
+                      ? 'cursor-not-allowed border-card-border bg-white text-muted opacity-45'
+                      : 'border-card-border bg-[#FFFCFA] text-foreground hover:border-primary/60 hover:bg-[#FFF0E5]'
+                )}
               >
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <div className="text-sm font-bold">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className={cn('font-bold tracking-tight', item.mode === 'full' ? 'text-2xl' : 'text-xl')}>
                     {modePending === item.mode
                       ? isActive ? '任务停止中' : '任务启动中'
                       : isActive ? `${item.title}中` : item.title}
                   </div>
-                  {isActive ? <Square className="h-4 w-4 fill-current" /> : <Play className="h-4 w-4" />}
+                  <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-full', emphasized ? 'bg-white/15' : 'bg-[#FFF0E5] text-primary')}>
+                    {isActive ? <Square className="h-4 w-4 fill-current" /> : <Play className="h-5 w-5 fill-current" />}
+                  </span>
                 </div>
-                <p className={`text-[11px] leading-5 ${isActive ? 'text-white/85' : 'text-muted'}`}>{item.description}</p>
+                <p className={`text-xs leading-5 ${emphasized ? 'text-white/90' : 'text-muted'}`}>{item.description}</p>
               </button>
             )
           })}
         </div>
-        {notice && <div className="mt-2 rounded-lg bg-[#FFF0E5] px-3 py-2 text-xs leading-5 text-primary">{notice}</div>}
+        {notice && <CompactNotice message={notice} />}
         {preflightChecks.some(check => check.status !== 'pass') && (
           <PreflightPanel checks={preflightChecks} checking={Boolean(modePending) || preflightRunning} onRetry={retryPreflight} />
         )}
-        {error && <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-danger">{error}</div>}
+        {error && <CompactNotice message={error} danger />}
         {visibleTask && (
-          <div className={`mt-3 rounded-xl border px-3 py-2 ${taskStatusClass(visibleTask.status)}`} role="region" aria-label="任务运行状态">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <span className="mr-2 text-[11px] text-muted">{taskStatusTitle(visibleTask.status)}</span>
-                <span className="whitespace-pre-line text-sm font-bold leading-5">{currentTaskStage(visibleTask)}</span>
-              </div>
-              <span className="shrink-0 text-[11px] font-bold text-muted">{taskStatusText(visibleTask.status)}</span>
-            </div>
-            {visibleTask.deadline_at && (
-              <div className="mt-1 text-[11px] text-muted">
-                自动截止：{new Date(visibleTask.deadline_at).toLocaleString('zh-CN', { hour12: false })}
-              </div>
-            )}
-            <details key={visibleTask.id} className="mt-1 text-xs">
-              <summary className="cursor-pointer py-1 text-muted hover:text-primary">查看运行详情</summary>
+          <details key={visibleTask.id} className={`group mt-2 rounded-lg border px-2 text-xs ${taskStatusClass(visibleTask.status)}`} aria-label="任务运行状态">
+            <summary className="flex h-8 cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
+              <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', visibleTask.status === 'failed' ? 'bg-danger' : 'bg-primary')} />
+              <span className="min-w-0 flex-1 truncate" title={taskSummary}>
+                {taskSummary}
+              </span>
+              <span className="shrink-0 text-muted">{taskStatusText(visibleTask.status)}</span>
+              <span className="flex shrink-0 items-center gap-1 text-muted">详情<ChevronDown className="h-3 w-3 group-open:rotate-180" /></span>
+            </summary>
+            <div className="border-t border-current/10 pb-2 pt-1">
+              <p className="whitespace-pre-line leading-5">{taskStatusTitle(visibleTask.status)}：{currentTaskStage(visibleTask)}</p>
+              {visibleTask.deadline_at && (
+                <p className="text-muted">自动截止：{new Date(visibleTask.deadline_at).toLocaleString('zh-CN', { hour12: false })}</p>
+              )}
               {visibleTask.metrics && taskMetricItems.some(item => item.key in visibleTask.metrics!) && (
                 <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                   {taskMetricItems.filter(item => item.key in visibleTask.metrics!).map(item => (
@@ -774,33 +768,33 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
               )}
               {visibleTask.progress?.platforms && <CollectionProgressPanel progress={visibleTask.progress} />}
               <p className="mt-2 text-[11px] leading-5 text-muted">浏览器没有反应时，请检查招聘平台登录状态和 Chrome 连接。</p>
-            </details>
-            {visibleTask.error && visibleTaskError && (
-              <div className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-danger">
-                <div className="font-black">{visibleTaskError.title}</div>
-                <p className="mt-1 text-xs leading-5">{visibleTaskError.detail}</p>
-                <details className="mt-2 text-xs text-muted">
-                  <summary className="cursor-pointer font-bold">查看原始错误</summary>
-                  <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-white p-2">{visibleTask.error}</pre>
-                </details>
-              </div>
-            )}
-            {visibleTask.stop_reason && (
-              <div className={`mt-2 rounded-lg px-3 py-2 text-xs leading-5 ${visibleTask.stop_reason === 'daily_limit' ? 'border border-amber-200 bg-amber-50 text-amber-800' : 'bg-[#FFF0E5] text-primary'}`}>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="font-black">{visibleTask.stop_reason === 'daily_limit' ? '本次未发送' : '任务说明'}</div>
-                    <div className="mt-1">{taskStopReasonLabel(visibleTask.stop_reason)}</div>
-                  </div>
-                  {visibleTask.stop_reason === 'daily_limit' && (
-                    <Button size="sm" variant="secondary" onClick={() => { window.location.href = '/config?section=throttle' }}>
-                      去设置发送额度
-                    </Button>
-                  )}
+              {visibleTask.error && visibleTaskError && (
+                <div className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-danger">
+                  <div className="font-black">{visibleTaskError.title}</div>
+                  <p className="mt-1 text-xs leading-5">{visibleTaskError.detail}</p>
+                  <details className="mt-2 text-xs text-muted">
+                    <summary className="cursor-pointer font-bold">查看原始错误</summary>
+                    <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-white p-2">{visibleTask.error}</pre>
+                  </details>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+              {visibleTask.stop_reason && (
+                <div className={`mt-2 rounded-lg px-3 py-2 text-xs leading-5 ${visibleTask.stop_reason === 'daily_limit' ? 'border border-amber-200 bg-amber-50 text-amber-800' : 'bg-[#FFF0E5] text-primary'}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="font-black">{visibleTask.stop_reason === 'daily_limit' ? '本次未发送' : '任务说明'}</div>
+                      <div className="mt-1">{taskStopReasonLabel(visibleTask.stop_reason)}</div>
+                    </div>
+                    {visibleTask.stop_reason === 'daily_limit' && (
+                      <Button size="sm" variant="secondary" onClick={() => { window.location.href = '/config?section=throttle' }}>
+                        去设置发送额度
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </details>
         )}
       </section>
 
@@ -1016,8 +1010,9 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
               {hasInvalidSalaryRange(todayFilters) ? '薪资范围有误，请展开调整' : `${filteredTodayJobs.length} / ${todayJobs.length} 个岗位`}
             </span>
           </summary>
-          <div className="px-3 pb-1">
+          <div className="px-2 pb-2">
             <JobFilterBar
+              compact
               filters={todayFilters}
               onChange={setTodayFilters}
               onReset={() => setTodayFilters({ ...EMPTY_JOB_FILTERS })}
