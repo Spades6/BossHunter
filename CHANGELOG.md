@@ -21,6 +21,7 @@
 
 ### 岗位采集与任务恢复
 
+- 猎聘只读采集接入 Web 面板，可在采集窗口选择猎聘并设置关键词、城市和页数；配置页、岗位筛选、平台标签和导出同步支持猎聘，仍不开放自动投递或消息监测。([#139](https://github.com/shengjidaguai-china/BossHunter/pull/139))
 - BOSS 明确区分“重新采集”和“继续采集”：重新采集从各城市、关键词组合的第一页开始发现新岗位，按岗位 ID 去重；只有继续采集才复用原任务参数和断点。整页保存成功后才推进断点，保存失败保留重试位置，支持恢复未完成的 BOSS 单平台采集任务。采集结束区分无新增、空结果、未完成和解析或保存失败，避免把部分失败显示为全部完成。([#170](https://github.com/shengjidaguai-china/BossHunter/pull/170)、[#196](https://github.com/shengjidaguai-china/BossHunter/pull/196))
 - 改进 BOSS 滚动加载和搜索页保留；先还原薪资字体编码再筛选，无法解析时明确记录原因。采集后自动评分只处理本次新增岗位，实时显示 AI 阶段、完成、通过、过滤与失败数量。([#196](https://github.com/shengjidaguai-china/BossHunter/pull/196))
 - 智联和猎聘只读采集后端支持带有效期的断点，续采可跳过已完成的城市、关键词组合；失败页保留重试位置。智联补齐配置校验、时间窗口、屏蔽公司、一票否决词、JD 和实习岗位过滤。([#155](https://github.com/shengjidaguai-china/BossHunter/pull/155)、[#158](https://github.com/shengjidaguai-china/BossHunter/pull/158)、[#159](https://github.com/shengjidaguai-china/BossHunter/pull/159))
@@ -58,7 +59,7 @@
 
 - 从源码安装或更新时，先按[完整上手指南](docs/QUICKSTART.md#2-安装)重新构建前端，再安装 Python 包；前端、程序版本、健康检查和首页统一为 **v2.4.0**。
 - BOSS 旧任务若没有可靠断点，需要重新采集；希望查找新岗位时选择“重新采集”，仅恢复中断任务时选择“继续采集”。
-- 猎聘仍为只读采集后端，前端入口待接入；智联实验性 API 默认关闭。所有发送仍须人工确认，原有时间窗口、额度和异常停止保护继续生效。
+- 猎聘已提供 Web 面板只读采集入口，不支持自动投递或消息监测；智联实验性 API 默认关闭。所有发送仍须人工确认，原有时间窗口、额度和异常停止保护继续生效。
 
 ## v2.3.2
 
