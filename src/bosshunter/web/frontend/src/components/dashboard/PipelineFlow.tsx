@@ -13,9 +13,9 @@ export function PipelineFlow() {
   return (
     <div className="rounded-2xl border border-card-border bg-[#FFFCFA] p-6">
       <h3 className="text-sm font-black text-foreground mb-4">BossHunter 自动求职流程</h3>
-      <div className="flex items-center justify-between">
+      <div className="grid grid-cols-3 gap-x-3 gap-y-5 lg:grid-cols-6">
         {steps.map((step, i) => (
-          <div key={step.label} className="flex items-center">
+          <div key={step.label} className="relative min-w-0">
             <div className="flex flex-col items-center">
               <div className="w-12 h-12 rounded-xl bg-white border border-card-border flex items-center justify-center mb-2 hover:border-primary/50 hover:shadow-md transition-all shadow-sm">
                 <step.icon className="w-5 h-5 text-primary" />
@@ -24,13 +24,13 @@ export function PipelineFlow() {
               <span className="text-[10px] text-muted mt-0.5">{step.desc}</span>
             </div>
             {i < steps.length - 1 && (
-              <div className="w-8 h-px bg-gradient-to-r from-[#F2E7DE] to-[#F2E7DE] mx-2 mb-6" />
+              <div className="absolute left-[calc(50%+28px)] right-[calc(-50%+16px)] top-6 hidden h-px bg-card-border lg:block" />
             )}
           </div>
         ))}
       </div>
       <p className="text-xs text-muted mt-4">
-        每个步骤都可独立运行，也可 <code className="rounded bg-white px-1.5 py-0.5 text-primary font-mono text-[11px] border border-card-border">bosshunter run</code> 一键全流程执行
+        可从上方选择运行全流程、单独采集或单独监测；投递前需要人工确认。
       </p>
     </div>
   )
