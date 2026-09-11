@@ -849,17 +849,42 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
         )}
         {error && <CompactNotice message={error} danger />}
         {visibleTask && (
-          <details key={visibleTask.id} className={`group mt-2 rounded-lg border px-2 text-xs ${taskStatusClass(visibleTask.status)}`} aria-label="任务运行状态">
-            <summary className="flex h-8 cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
-              <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', visibleTask.status === 'failed' ? 'bg-danger' : 'bg-primary')} />
-              <span className="min-w-0 flex-1 truncate" title={taskSummary}>
-                {taskSummary}
+          <div className="mt-3 rounded-3xl border border-card-border bg-[#FFFCFA] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-black">任务运行状态</div>
+                <p className="mt-1 text-xs leading-5 text-muted">如果点击后浏览器没有反应，请先打开 BOSS 直聘并确认已登录；常见失败原因是 BOSS 未登录或 Chrome 调试连接不可用。</p>
+              </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-[#FFF0E5] px-3 py-1 text-xs font-black text-primary">
+                {visibleTask.label}
               </span>
-              <span className="shrink-0 text-muted">{taskStatusText(visibleTask.status)}</span>
-              <span className="flex shrink-0 items-center gap-1 text-muted">详情<ChevronDown className="h-3 w-3 group-open:rotate-180" /></span>
-            </summary>
-            <div className="border-t border-current/10 pb-2 pt-1">
-              <p className="whitespace-pre-line leading-5">{taskStatusTitle(visibleTask.status)}：{currentTaskStage(visibleTask)}</p>
+              {activeTask && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={activeTask.status !== 'running'}
+                  onClick={() => {
+                    if (!window.confirm(`是否停止当前${activeTask.label}任务？已入库数据会保留。`)) return
+                    setNotice(`正在停止${activeTask.label}...`)
+                    void stopTask(activeTask.id)
+                      .then(() => setNotice(`${activeTask.label}已请求停止。`))
+                      .catch(err => setNotice(
+                        err instanceof Error
+                          ? `${activeTask.label}停止失败：${err.message}`
+                          : `${activeTask.label}停止失败，请稍后重试。`
+                      ))
+                  }}
+                >
+                  {activeTask.status === 'stopping' ? '正在停止...' : '停止任务'}
+                </Button>
+              )}
+            </div>
+            </div>
+            <div className={`mt-3 rounded-2xl border px-4 py-3 ${taskStatusClass(visibleTask.status)}`}>
+              <div className="text-xs font-black text-primary">{taskStatusTitle(visibleTask.status)}</div>
+              <div className="mt-1 whitespace-pre-line text-lg font-black leading-7 text-foreground">{currentTaskStage(visibleTask)}</div>
+              <div className="mt-1 text-xs font-bold text-muted">任务状态：{taskStatusText(visibleTask.status)}</div>
               {visibleTask.deadline_at && (
                 <p className="text-muted">自动截止：{new Date(visibleTask.deadline_at).toLocaleString('zh-CN', { hour12: false })}</p>
               )}
@@ -878,35 +903,34 @@ export default function DashboardPage({ view = 'workbench' }: DashboardPageProps
                   提前暂停原因：{greetPauseReasonLabel(visibleTask.metrics?.greet_pause_reason) || 'AI 服务异常'}。已生成内容已保存，剩余岗位下次运行会继续处理。
                 </div>
               )}
-              {visibleTask.progress?.platforms && <CollectionProgressPanel progress={visibleTask.progress} />}
-              <p className="mt-2 text-[11px] leading-5 text-muted">浏览器没有反应时，请检查招聘平台登录状态和 Chrome 连接。</p>
-              {visibleTask.error && visibleTaskError && (
-                <div className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-danger">
-                  <div className="font-black">{visibleTaskError.title}</div>
-                  <p className="mt-1 text-xs leading-5">{visibleTaskError.detail}</p>
-                  <details className="mt-2 text-xs text-muted">
-                    <summary className="cursor-pointer font-bold">查看原始错误</summary>
-                    <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-white p-2">{visibleTask.error}</pre>
-                  </details>
-                </div>
-              )}
-              {visibleTask.stop_reason && (
-                <div className={`mt-2 rounded-lg px-3 py-2 text-xs leading-5 ${visibleTask.stop_reason === 'daily_limit' ? 'border border-amber-200 bg-amber-50 text-amber-800' : 'bg-[#FFF0E5] text-primary'}`}>
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="font-black">{visibleTask.stop_reason === 'daily_limit' ? '本次未发送' : '任务说明'}</div>
-                      <div className="mt-1">{taskStopReasonLabel(visibleTask.stop_reason)}</div>
-                    </div>
-                    {visibleTask.stop_reason === 'daily_limit' && (
-                      <Button size="sm" variant="secondary" onClick={() => { window.location.href = '/config?section=throttle' }}>
-                        去设置发送额度
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
-          </details>
+            {visibleTask.progress?.platforms && <CollectionProgressPanel progress={visibleTask.progress} />}
+            {visibleTask.error && visibleTaskError && (
+              <div className="mt-3 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-danger">
+                <div className="font-black">{visibleTaskError.title}</div>
+                <p className="mt-1 text-xs leading-5">{visibleTaskError.detail}</p>
+                <details className="mt-2 text-xs text-muted">
+                  <summary className="cursor-pointer font-bold">查看原始错误</summary>
+                  <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-white p-2">{visibleTask.error}</pre>
+                </details>
+              </div>
+            )}
+            {visibleTask.stop_reason && (
+              <div className={`mt-3 rounded-2xl px-3 py-3 text-sm ${visibleTask.stop_reason === 'daily_limit' ? 'border border-amber-200 bg-amber-50 text-amber-800' : 'bg-[#FFF0E5] text-primary'}`}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="font-black">{visibleTask.stop_reason === 'daily_limit' ? '本次未发送' : '任务说明'}</div>
+                    <div className="mt-1">{taskStopReasonLabel(visibleTask.stop_reason)}</div>
+                  </div>
+                  {visibleTask.stop_reason === 'daily_limit' && (
+                    <Button size="sm" variant="secondary" onClick={() => { window.location.href = '/config?section=throttle' }}>
+                      去设置发送额度
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </section>
 
