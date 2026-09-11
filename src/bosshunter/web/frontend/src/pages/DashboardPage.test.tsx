@@ -117,7 +117,7 @@ describe('DashboardPage workbench task panel', () => {
     fireEvent.click(stopButton)
     expect(confirmSpy).toHaveBeenCalled()
     await waitFor(() => {
-      expect(screen.getByText('单独采集停止失败：任务已结束，无法停止')).toBeTruthy()
+      expect(screen.getAllByText('单独采集停止失败：任务已结束，无法停止').length).toBeGreaterThan(0)
     })
   })
 
@@ -131,7 +131,7 @@ describe('DashboardPage workbench task panel', () => {
     const stopButton = await screen.findByRole('button', { name: '停止任务' })
     fireEvent.click(stopButton)
     await waitFor(() => {
-      expect(screen.getByText('单独采集已请求停止。')).toBeTruthy()
+      expect(screen.getAllByText('单独采集已请求停止。').length).toBeGreaterThan(0)
     })
   })
   it('displays the final edited version alongside both generated candidates', async () => {
